@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
 import os
-from datetime import datetime
+import requests
 import json
-from supabase import create_client, Client
+from datetime import datetime
 
 # Supabase config
 try:
@@ -16,22 +16,57 @@ try:
 except (KeyError, FileNotFoundError):
     SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
+# Supabase REST API helper
+def supabase_request(method, endpoint, params=None, data=None):
+    url = f"{SUPABASE_URL}/rest/v1/{endpoint}"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation"
+    }
+    
+    try:
+        if method.lower() == "get":
+            response = requests.get(url, headers=headers, params=params)
+        elif method.lower() == "post":
+            response = requests.post(url, headers=headers, json=data)
+        elif method.lower() == "put":
+            response = requests.put(url, headers=headers, json=data)
+        elif method.lower() == "patch":
+            response = requests.patch(url, headers=headers, json=data)
+        elif method.lower() == "delete":
+            response = requests.delete(url, headers=headers, params=params)
+        else:
+            st.error(f"Invalid method: {method}")
+            return None
+        
+        if response.status_code >= 400:
+            st.error(f"API Error: {response.status_code} - {response.text}")
+            return None
+        
+        return response.json()
+    except Exception as e:
+        st.error(f"Request error: {str(e)}")
+        return None
+
 # Get Supabase client
 def get_supabase_client():
     if 'supabase_url' in st.session_state and 'supabase_key' in st.session_state:
-        url = st.session_state.supabase_url
-        key = st.session_state.supabase_key
-    else:
-        url = SUPABASE_URL
-        key = SUPABASE_KEY
+        global SUPABASE_URL, SUPABASE_KEY
+        SUPABASE_URL = st.session_state.supabase_url
+        SUPABASE_KEY = st.session_state.supabase_key
     
-    if not url or not key:
+    if not SUPABASE_URL or not SUPABASE_KEY:
         st.error("Configure credentials first")
         st.stop()
     
     try:
-        supabase = create_client(url, key)
-        return supabase
+        test = supabase_request("get", "ai_personas", params={"limit": 1})
+        if test is None:
+            st.error("Connection failed")
+            st.stop()
+        return True
     except Exception as e:
         st.error(f"Connection failed: {str(e)}")
         st.stop()
@@ -39,21 +74,22 @@ def get_supabase_client():
 # Check if tables exist
 def initialize_database():
     try:
-        supabase = get_supabase_client()
-        response = supabase.table('ai_personas').select('*').limit(1).execute()
-        st.sidebar.success("✅ Tables ready")
-        return True
+        result = supabase_request("get", "ai_personas", params={"limit": 1})
+        if result is not None:
+            st.sidebar.success("✅ Tables ready")
+            return True
+        
+        st.sidebar.warning("Database not connected")
+        return False
     except Exception as e:
-        error_message = str(e)
-        if "relation" in error_message and "does not exist" in error_message:
-            st.sidebar.error("Tables not set up")
-        else:
-            st.sidebar.error(f"DB error: {error_message}")
+        st.sidebar.warning("Database not connected")
         return False
 
-# Function to return the SQL needed to create tables in Supabase
+# SQL script for table creation
 def get_table_creation_sql():
     return """
+-- Create tables in Supabase SQL Editor
+
 -- AI Personas table
 CREATE TABLE IF NOT EXISTS ai_personas (
     persona_id SERIAL PRIMARY KEY,
@@ -126,356 +162,294 @@ CREATE TABLE IF NOT EXISTS evaluations (
 class PersonaManager:
     @staticmethod
     def create(name, description=""):
-        supabase = get_supabase_client()
-        result = supabase.table('ai_personas').insert({
+        data = {
             "name": name,
             "description": description
-        }).execute()
-        
-        if result.data:
-            return result.data[0]['persona_id']
+        }
+        result = supabase_request("post", "ai_personas", data=data)
+        if result and len(result) > 0:
+            return result[0]['persona_id']
         return None
     
     @staticmethod
     def get_all():
-        supabase = get_supabase_client()
-        result = supabase.table('ai_personas').select('*').order('name').execute()
-        return pd.DataFrame(result.data) if result.data else pd.DataFrame()
+        result = supabase_request("get", "ai_personas", params={"order": "name"})
+        return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
     def get_by_id(persona_id):
-        supabase = get_supabase_client()
-        result = supabase.table('ai_personas').select('*').eq('persona_id', persona_id).execute()
-        return pd.DataFrame(result.data) if result.data else pd.DataFrame()
+        result = supabase_request("get", f"ai_personas", params={"persona_id": f"eq.{persona_id}"})
+        return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
     def update(persona_id, name, description):
-        supabase = get_supabase_client()
-        supabase.table('ai_personas').update({
+        data = {
             "name": name,
             "description": description,
             "updated_at": datetime.now().isoformat()
-        }).eq('persona_id', persona_id).execute()
+        }
+        supabase_request("patch", f"ai_personas", params={"persona_id": f"eq.{persona_id}"}, data=data)
     
     @staticmethod
     def delete(persona_id):
-        supabase = get_supabase_client()
-        supabase.table('ai_personas').delete().eq('persona_id', persona_id).execute()
+        supabase_request("delete", f"ai_personas", params={"persona_id": f"eq.{persona_id}"})
 
 class CategoryManager:
     @staticmethod
     def create(persona_id, name, description=""):
-        supabase = get_supabase_client()
-        result = supabase.table('question_categories').insert({
+        data = {
             "persona_id": persona_id,
             "name": name,
             "description": description
-        }).execute()
-        
-        if result.data:
-            return result.data[0]['category_id']
+        }
+        result = supabase_request("post", "question_categories", data=data)
+        if result and len(result) > 0:
+            return result[0]['category_id']
         return None
     
     @staticmethod
     def get_by_persona(persona_id):
-        supabase = get_supabase_client()
-        result = supabase.table('question_categories')\
-            .select('*')\
-            .eq('persona_id', persona_id)\
-            .order('name')\
-            .execute()
-        return pd.DataFrame(result.data) if result.data else pd.DataFrame()
+        result = supabase_request("get", "question_categories", 
+                                params={"persona_id": f"eq.{persona_id}", "order": "name"})
+        return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
     def get_by_id(category_id):
-        supabase = get_supabase_client()
-        result = supabase.table('question_categories')\
-            .select('*')\
-            .eq('category_id', category_id)\
-            .execute()
-        return pd.DataFrame(result.data) if result.data else pd.DataFrame()
+        result = supabase_request("get", "question_categories", 
+                                params={"category_id": f"eq.{category_id}"})
+        return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
     def update(category_id, name, description):
-        supabase = get_supabase_client()
-        supabase.table('question_categories').update({
+        data = {
             "name": name,
             "description": description,
             "updated_at": datetime.now().isoformat()
-        }).eq('category_id', category_id).execute()
+        }
+        supabase_request("patch", "question_categories", 
+                       params={"category_id": f"eq.{category_id}"}, 
+                       data=data)
     
     @staticmethod
     def delete(category_id):
-        supabase = get_supabase_client()
-        supabase.table('question_categories').delete().eq('category_id', category_id).execute()
+        supabase_request("delete", "question_categories", 
+                       params={"category_id": f"eq.{category_id}"})
 
 class ThreadManager:
     @staticmethod
     def create(category_id, name, description=""):
-        supabase = get_supabase_client()
-        result = supabase.table('question_threads').insert({
+        data = {
             "category_id": category_id,
             "name": name,
             "description": description
-        }).execute()
-        
-        if result.data:
-            return result.data[0]['thread_id']
+        }
+        result = supabase_request("post", "question_threads", data=data)
+        if result and len(result) > 0:
+            return result[0]['thread_id']
         return None
     
     @staticmethod
     def get_by_category(category_id):
-        supabase = get_supabase_client()
-        result = supabase.table('question_threads')\
-            .select('*')\
-            .eq('category_id', category_id)\
-            .order('name')\
-            .execute()
-        return pd.DataFrame(result.data) if result.data else pd.DataFrame()
+        result = supabase_request("get", "question_threads", 
+                                params={"category_id": f"eq.{category_id}", "order": "name"})
+        return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
     def get_by_id(thread_id):
-        supabase = get_supabase_client()
-        result = supabase.table('question_threads')\
-            .select('*')\
-            .eq('thread_id', thread_id)\
-            .execute()
-        return pd.DataFrame(result.data) if result.data else pd.DataFrame()
+        result = supabase_request("get", "question_threads", 
+                                params={"thread_id": f"eq.{thread_id}"})
+        return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
     def update(thread_id, name, description):
-        supabase = get_supabase_client()
-        supabase.table('question_threads').update({
+        data = {
             "name": name,
             "description": description,
             "updated_at": datetime.now().isoformat()
-        }).eq('thread_id', thread_id).execute()
+        }
+        supabase_request("patch", "question_threads", 
+                       params={"thread_id": f"eq.{thread_id}"}, 
+                       data=data)
     
     @staticmethod
     def delete(thread_id):
-        supabase = get_supabase_client()
-        supabase.table('question_threads').delete().eq('thread_id', thread_id).execute()
+        supabase_request("delete", "question_threads", 
+                       params={"thread_id": f"eq.{thread_id}"})
 
 class QuestionManager:
     @staticmethod
     def create(thread_id, content, sequence_number=None):
-        supabase = get_supabase_client()
-        
-        # If sequence_number not provided, find the next one
         if sequence_number is None:
-            result = supabase.table('questions')\
-                .select('sequence_number')\
-                .eq('thread_id', thread_id)\
-                .order('sequence_number', desc=True)\
-                .limit(1)\
-                .execute()
-            
+            result = supabase_request("get", "questions", 
+                                    params={"thread_id": f"eq.{thread_id}", "order": "sequence_number.desc", "limit": 1})
             sequence_number = 1
-            if result.data:
-                sequence_number = result.data[0]['sequence_number'] + 1
+            if result and len(result) > 0:
+                sequence_number = result[0]['sequence_number'] + 1
         
-        result = supabase.table('questions').insert({
+        data = {
             "thread_id": thread_id,
             "sequence_number": sequence_number,
             "content": content
-        }).execute()
-        
-        if result.data:
-            return result.data[0]['question_id']
+        }
+        result = supabase_request("post", "questions", data=data)
+        if result and len(result) > 0:
+            question_id = result[0]['question_id']
+            QuestionManager.reorder(thread_id)
+            return question_id
         return None
     
     @staticmethod
     def get_by_thread(thread_id):
-        supabase = get_supabase_client()
-        result = supabase.table('questions')\
-            .select('*')\
-            .eq('thread_id', thread_id)\
-            .order('sequence_number')\
-            .execute()
-        return pd.DataFrame(result.data) if result.data else pd.DataFrame()
+        result = supabase_request("get", "questions", 
+                                params={"thread_id": f"eq.{thread_id}", "order": "sequence_number"})
+        return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
     def get_by_id(question_id):
-        supabase = get_supabase_client()
-        result = supabase.table('questions')\
-            .select('*')\
-            .eq('question_id', question_id)\
-            .execute()
-        return pd.DataFrame(result.data) if result.data else pd.DataFrame()
+        result = supabase_request("get", "questions", 
+                                params={"question_id": f"eq.{question_id}"})
+        return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
     def update(question_id, content, sequence_number=None):
-        supabase = get_supabase_client()
-        update_data = {
+        data = {
             "content": content,
             "updated_at": datetime.now().isoformat()
         }
         
         if sequence_number is not None:
-            update_data["sequence_number"] = sequence_number
+            data["sequence_number"] = sequence_number
         
-        supabase.table('questions')\
-            .update(update_data)\
-            .eq('question_id', question_id)\
-            .execute()
+        supabase_request("patch", "questions", 
+                       params={"question_id": f"eq.{question_id}"}, 
+                       data=data)
     
     @staticmethod
     def delete(question_id):
-        supabase = get_supabase_client()
-        supabase.table('questions').delete().eq('question_id', question_id).execute()
+        question = QuestionManager.get_by_id(question_id)
+        if not question.empty:
+            thread_id = question.iloc[0]['thread_id']
+            supabase_request("delete", "questions", params={"question_id": f"eq.{question_id}"})
+            QuestionManager.reorder(thread_id)
     
     @staticmethod
     def reorder(thread_id):
-        """Reindex sequence numbers to be consecutive integers starting from 1"""
-        supabase = get_supabase_client()
-        
-        # Get all questions for this thread ordered by current sequence
-        result = supabase.table('questions')\
-            .select('question_id')\
-            .eq('thread_id', thread_id)\
-            .order('sequence_number')\
-            .execute()
-        
-        if not result.data:
+        questions = QuestionManager.get_by_thread(thread_id)
+        if questions.empty:
             return
         
-        # Update sequence numbers to be consecutive
-        for idx, row in enumerate(result.data, 1):
-            supabase.table('questions')\
-                .update({"sequence_number": idx})\
-                .eq('question_id', row['question_id'])\
-                .execute()
+        for idx, row in enumerate(questions.itertuples(), 1):
+            if row.sequence_number != idx:
+                supabase_request("patch", "questions", 
+                               params={"question_id": f"eq.{row.question_id}"}, 
+                               data={"sequence_number": idx})
 
 class AnswerManager:
     @staticmethod
     def create(question_id, content, is_ai_generated=True, metadata=""):
-        supabase = get_supabase_client()
-        result = supabase.table('answers').insert({
+        data = {
             "question_id": question_id,
             "is_ai_generated": is_ai_generated,
             "content": content,
             "metadata": metadata
-        }).execute()
-        
-        if result.data:
-            return result.data[0]['answer_id']
+        }
+        result = supabase_request("post", "answers", data=data)
+        if result and len(result) > 0:
+            return result[0]['answer_id']
         return None
     
     @staticmethod
     def get_by_question(question_id):
-        supabase = get_supabase_client()
-        result = supabase.table('answers')\
-            .select('*')\
-            .eq('question_id', question_id)\
-            .order('created_at')\
-            .execute()
-        return pd.DataFrame(result.data) if result.data else pd.DataFrame()
+        result = supabase_request("get", "answers", 
+                                params={"question_id": f"eq.{question_id}", "order": "created_at"})
+        return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
     def get_by_id(answer_id):
-        supabase = get_supabase_client()
-        result = supabase.table('answers')\
-            .select('*')\
-            .eq('answer_id', answer_id)\
-            .execute()
-        return pd.DataFrame(result.data) if result.data else pd.DataFrame()
+        result = supabase_request("get", "answers", 
+                                params={"answer_id": f"eq.{answer_id}"})
+        return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
     def update(answer_id, content, is_ai_generated=None, metadata=None):
-        supabase = get_supabase_client()
-        update_data = {
+        data = {
             "content": content,
             "updated_at": datetime.now().isoformat()
         }
         
         if is_ai_generated is not None:
-            update_data["is_ai_generated"] = is_ai_generated
+            data["is_ai_generated"] = is_ai_generated
         
         if metadata is not None:
-            update_data["metadata"] = metadata
+            data["metadata"] = metadata
         
-        supabase.table('answers')\
-            .update(update_data)\
-            .eq('answer_id', answer_id)\
-            .execute()
+        supabase_request("patch", "answers", 
+                       params={"answer_id": f"eq.{answer_id}"}, 
+                       data=data)
     
     @staticmethod
     def delete(answer_id):
-        supabase = get_supabase_client()
-        supabase.table('answers').delete().eq('answer_id', answer_id).execute()
+        supabase_request("delete", "answers", params={"answer_id": f"eq.{answer_id}"})
 
 class EvaluationManager:
     @staticmethod
     def create(answer_id, dimension, score, comments="", evaluator=""):
-        supabase = get_supabase_client()
-        result = supabase.table('evaluations').insert({
+        data = {
             "answer_id": answer_id,
             "dimension": dimension,
             "score": score,
             "comments": comments,
             "evaluator": evaluator
-        }).execute()
-        
-        if result.data:
-            return result.data[0]['evaluation_id']
+        }
+        result = supabase_request("post", "evaluations", data=data)
+        if result and len(result) > 0:
+            return result[0]['evaluation_id']
         return None
     
     @staticmethod
     def get_by_answer(answer_id):
-        supabase = get_supabase_client()
-        result = supabase.table('evaluations')\
-            .select('*')\
-            .eq('answer_id', answer_id)\
-            .order('dimension')\
-            .execute()
-        return pd.DataFrame(result.data) if result.data else pd.DataFrame()
+        result = supabase_request("get", "evaluations", 
+                                params={"answer_id": f"eq.{answer_id}", "order": "dimension"})
+        return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
     def get_dimensions_for_answer(answer_id):
-        supabase = get_supabase_client()
-        result = supabase.table('evaluations')\
-            .select('dimension')\
-            .eq('answer_id', answer_id)\
-            .execute()
-        return [row['dimension'] for row in result.data] if result.data else []
+        result = supabase_request("get", "evaluations", 
+                                params={"answer_id": f"eq.{answer_id}", "select": "dimension"})
+        return [row['dimension'] for row in result] if result else []
     
     @staticmethod
     def get_by_id(evaluation_id):
-        supabase = get_supabase_client()
-        result = supabase.table('evaluations')\
-            .select('*')\
-            .eq('evaluation_id', evaluation_id)\
-            .execute()
-        return pd.DataFrame(result.data) if result.data else pd.DataFrame()
+        result = supabase_request("get", "evaluations", 
+                                params={"evaluation_id": f"eq.{evaluation_id}"})
+        return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
     def update(evaluation_id, dimension=None, score=None, comments=None, evaluator=None):
-        supabase = get_supabase_client()
-        update_data = {"updated_at": datetime.now().isoformat()}
+        data = {"updated_at": datetime.now().isoformat()}
         
         if dimension is not None:
-            update_data["dimension"] = dimension
+            data["dimension"] = dimension
         
         if score is not None:
-            update_data["score"] = score
+            data["score"] = score
         
         if comments is not None:
-            update_data["comments"] = comments
+            data["comments"] = comments
         
         if evaluator is not None:
-            update_data["evaluator"] = evaluator
+            data["evaluator"] = evaluator
         
-        supabase.table('evaluations')\
-            .update(update_data)\
-            .eq('evaluation_id', evaluation_id)\
-            .execute()
+        supabase_request("patch", "evaluations", 
+                       params={"evaluation_id": f"eq.{evaluation_id}"}, 
+                       data=data)
     
     @staticmethod
     def delete(evaluation_id):
-        supabase = get_supabase_client()
-        supabase.table('evaluations').delete().eq('evaluation_id', evaluation_id).execute()
+        supabase_request("delete", "evaluations", 
+                       params={"evaluation_id": f"eq.{evaluation_id}"})
 
-# Streamlit UI functions - these remain mostly the same as your original code
+# UI functions
 def persona_page():
     st.header("AI X-Engineer Personas")
     
@@ -768,7 +742,6 @@ def question_page():
                 if submit_button and content:
                     try:
                         QuestionManager.create(thread_id, content, sequence)
-                        QuestionManager.reorder(thread_id)  # Ensure proper ordering
                         st.success("Added question successfully!")
                         st.rerun()
                     except Exception as e:
@@ -825,7 +798,6 @@ def question_page():
                     if delete_button:
                         try:
                             QuestionManager.delete(row['question_id'])
-                            QuestionManager.reorder(thread_id)  # Ensure proper ordering
                             st.success("Deleted successfully!")
                             st.rerun()
                         except Exception as e:
@@ -836,8 +808,9 @@ def question_page():
                     st.write(f"**This question has {len(answers)} answers.**")
                     if not answers.empty:
                         for ans_idx, ans_row in answers.iterrows():
+                            content_length = len(str(ans_row['content'])) if ans_row['content'] else 0
                             st.write(f"- Answer {ans_idx+1}: \"{'AI' if ans_row['is_ai_generated'] else 'Human'} Response\" "
-                                    f"({len(ans_row['content'])[:30]} chars)")
+                                    f"({content_length} chars)")
         else:
             st.info(f"No questions have been added for this thread yet.")
     except Exception as e:
@@ -1149,8 +1122,6 @@ def evaluation_page():
             ]
             for dim in dimensions:
                 st.write(f"- {dim}")
-    except Exception as e:
-        st.error(f"Error on evaluation page: {str(e)}")
 
 # Main function
 def main():
@@ -1166,7 +1137,7 @@ def main():
     
     # No credentials available
     if not SUPABASE_URL or not SUPABASE_KEY:
-        st.sidebar.title("Configure Credentials →")
+        st.sidebar.markdown("### Configure credentials")
         
         # Credential form
         st.header("Supabase Database Setup")
@@ -1204,6 +1175,7 @@ def main():
     if not initialize_database():
         st.warning("Set up database tables")
         st.header("Database Setup")
+        st.markdown("Run this SQL in your Supabase SQL Editor:")
         st.code(get_table_creation_sql(), language="sql")
         return
     
