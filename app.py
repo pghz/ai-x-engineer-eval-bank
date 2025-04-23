@@ -1122,6 +1122,8 @@ def evaluation_page():
             ]
             for dim in dimensions:
                 st.write(f"- {dim}")
+    except Exception as e:
+        st.error(f"Error on evaluation page: {str(e)}")
 
 # Main function
 def main():
