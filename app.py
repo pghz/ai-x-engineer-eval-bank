@@ -1158,7 +1158,7 @@ def evaluation_page():
         # Form for adding a new evaluation
         with st.expander("Add New Evaluation"):
             with st.form("add_evaluation_form"):
-                dimension = st.text_input("Evaluation Dimension (e.g., Accuracy, Clarity)")
+                dimension = st.text_input("Evaluation Dimension (eg accuracy, clarity, relevance, completeness, coherence, insight, tone, verifiability, specificity, etc)")
                 author = st.text_input("Created By (optional)")
                 score = st.slider("Score", min_value=0.0, max_value=10.0, value=5.0, step=1.0)
                 comments = st.text_area("Comments/Feedback (optional)", height=100)
