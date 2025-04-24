@@ -462,7 +462,8 @@ def persona_page():
     with st.expander("Add New Persona"):
         with st.form("add_persona_form"):
             name = st.text_input("Persona Name")
-            description = st.text_area("Description (optional)")
+            author = st.text_input("Created By (optional)")
+            description = st.text_area("Description (optional)", height=100)
             submit_button = st.form_submit_button("Add Persona")
             
             if submit_button and name:
@@ -875,8 +876,68 @@ def question_page():
     except Exception as e:
         st.error(f"Error on questions page: {str(e)}")
 
-answer_thread_select"
+def answer_page():
+    st.header("AI/Human Generated Answers")
+    
+    try:
+        # Navigation selections for hierarchy
+        personas = PersonaManager.get_all()
+        if personas.empty:
+            st.warning("Please add an AI Persona first.")
+            return
+        
+        # Select a persona - use session state to remember last selection
+        if 'last_persona_id' not in st.session_state:
+            st.session_state.last_persona_id = personas['persona_id'].iloc[0] if not personas.empty else None
+            
+        persona_id = st.selectbox(
+            "Select AI Persona",
+            options=personas['persona_id'].tolist(),
+            format_func=lambda x: personas.loc[personas['persona_id'] == x, 'name'].iloc[0],
+            key="answer_persona_select",
+            index=personas['persona_id'].tolist().index(st.session_state.last_persona_id) if st.session_state.last_persona_id in personas['persona_id'].values else 0
         )
+        st.session_state.last_persona_id = persona_id
+        
+        # Get categories for the selected persona
+        categories = CategoryManager.get_by_persona(persona_id)
+        if categories.empty:
+            st.warning(f"Please add Categories for the selected persona first.")
+            return
+        
+        # Select a category - use session state to remember last selection
+        category_key = f"last_category_id_{persona_id}"
+        if category_key not in st.session_state:
+            st.session_state[category_key] = categories['category_id'].iloc[0] if not categories.empty else None
+            
+        category_id = st.selectbox(
+            "Select Question Category",
+            options=categories['category_id'].tolist(),
+            format_func=lambda x: categories.loc[categories['category_id'] == x, 'name'].iloc[0],
+            key="answer_category_select",
+            index=categories['category_id'].tolist().index(st.session_state[category_key]) if st.session_state[category_key] in categories['category_id'].values else 0
+        )
+        st.session_state[category_key] = category_id
+        
+        # Get threads for the selected category
+        threads = ThreadManager.get_by_category(category_id)
+        if threads.empty:
+            st.warning(f"Please add Threads for the selected category first.")
+            return
+        
+        # Select a thread - use session state to remember last selection
+        thread_key = f"last_thread_id_{category_id}"
+        if thread_key not in st.session_state:
+            st.session_state[thread_key] = threads['thread_id'].iloc[0] if not threads.empty else None
+            
+        thread_id = st.selectbox(
+            "Select Question Thread",
+            options=threads['thread_id'].tolist(),
+            format_func=lambda x: threads.loc[threads['thread_id'] == x, 'name'].iloc[0],
+            key="answer_thread_select",
+            index=threads['thread_id'].tolist().index(st.session_state[thread_key]) if st.session_state[thread_key] in threads['thread_id'].values else 0
+        )
+        st.session_state[thread_key] = thread_id
         
         # Get questions for the selected thread
         questions = QuestionManager.get_by_thread(thread_id)
@@ -884,13 +945,19 @@ answer_thread_select"
             st.warning(f"Please add Questions for the selected thread first.")
             return
         
-        # Select a question
+        # Select a question - use session state to remember last selection
+        question_key = f"last_question_id_{thread_id}"
+        if question_key not in st.session_state:
+            st.session_state[question_key] = questions['question_id'].iloc[0] if not questions.empty else None
+            
         question_id = st.selectbox(
             "Select Question",
             options=questions['question_id'].tolist(),
-            format_func=lambda x: f"Q{questions.loc[questions['question_id'] == x, 'sequence_number'].iloc[0]}: {questions.loc[questions['question_id'] == x, 'content'].iloc[0][:50]}...",
-            key="answer_question_select"
+            format_func=lambda x: f"Q{questions.loc[questions['question_id'] == x, 'sequence_number'].iloc[0]}: {questions.loc[questions['question_id'] == x, 'content'].iloc[0][:100]}...",
+            key="answer_question_select",
+            index=questions['question_id'].tolist().index(st.session_state[question_key]) if st.session_state[question_key] in questions['question_id'].values else 0
         )
+        st.session_state[question_key] = question_id
         
         question_content = questions.loc[questions['question_id'] == question_id, 'content'].iloc[0]
         question_seq = questions.loc[questions['question_id'] == question_id, 'sequence_number'].iloc[0]
@@ -930,10 +997,12 @@ answer_thread_select"
                     st.write(f"**Updated:** {row['updated_at']}")
                     
                     # Edit form
-                    with st.form(f"edit_answer_{row['answer_id']}"):
+                    form_key = f"edit_answer_{row['answer_id']}"
+                    with st.form(form_key):
                         edit_content = st.text_area("Content", value=row['content'])
+                        edit_author = st.text_input("Updated By (optional)")
                         edit_is_ai = st.checkbox("Is AI Generated", value=bool(row['is_ai_generated']))
-                        edit_metadata = st.text_area("Metadata", value=row['metadata'] if row['metadata'] else "")
+                        edit_metadata = st.text_area("Metadata (optional)", value=row['metadata'] if row['metadata'] else "", height=100)
                         
                         col1, col2 = st.columns(2)
                         with col1:
