@@ -488,7 +488,8 @@ def persona_page():
                     form_key = f"edit_persona_{row['persona_id']}"
                     with st.form(form_key):
                         edit_name = st.text_input("Name", value=row['name'])
-                        edit_desc = st.text_area("Description (optional)", value=row['description'])
+                        edit_author = st.text_input("Updated By (optional)")
+                        edit_desc = st.text_area("Description (optional)", value=row['description'], height=100)
                         
                         col1, col2 = st.columns(2)
                         with col1:
@@ -545,7 +546,8 @@ def category_page():
         with st.expander("Add New Category"):
             with st.form("add_category_form"):
                 name = st.text_input("Category Name")
-                description = st.text_area("Description (optional)")
+                author = st.text_input("Created By (optional)")
+                description = st.text_area("Description (optional)", height=100)
                 submit_button = st.form_submit_button("Add Category")
                 
                 if submit_button and name:
@@ -570,7 +572,8 @@ def category_page():
                     form_key = f"edit_category_{row['category_id']}"
                     with st.form(form_key):
                         edit_name = st.text_input("Name", value=row['name'])
-                        edit_desc = st.text_area("Description (optional)", value=row['description'])
+                        edit_author = st.text_input("Updated By (optional)")
+                        edit_desc = st.text_area("Description (optional)", value=row['description'], height=100)
                         
                         col1, col2 = st.columns(2)
                         with col1:
@@ -646,7 +649,8 @@ def thread_page():
         with st.expander("Add New Thread"):
             with st.form("add_thread_form"):
                 name = st.text_input("Thread Name")
-                description = st.text_area("Description (optional)")
+                author = st.text_input("Created By (optional)")
+                description = st.text_area("Description (optional)", height=100)
                 submit_button = st.form_submit_button("Add Thread")
                 
                 if submit_button and name:
@@ -671,7 +675,8 @@ def thread_page():
                     form_key = f"edit_thread_{row['thread_id']}"
                     with st.form(form_key):
                         edit_name = st.text_input("Name", value=row['name'])
-                        edit_desc = st.text_area("Description (optional)", value=row['description'])
+                        edit_author = st.text_input("Updated By (optional)")
+                        edit_desc = st.text_area("Description (optional)", value=row['description'], height=100)
                         
                         col1, col2 = st.columns(2)
                         with col1:
@@ -769,8 +774,10 @@ def question_page():
         with st.expander("Add New Question"):
             with st.form("add_question_form"):
                 content = st.text_area("Question Content")
+                author = st.text_input("Created By (optional)")
                 references = st.text_area("References (optional)", 
-                                          help="Add links to files, images, or other resources that this question refers to")
+                                          help="Add links to files, images, or other resources that this question refers to",
+                                          height=100)
                 
                 questions = QuestionManager.get_by_thread(thread_id)
                 max_seq = 1 if questions.empty else questions['sequence_number'].max() + 1
@@ -809,7 +816,7 @@ def question_page():
                         st.error(f"Error reordering questions: {str(e)}")
             
             for i, (_, row) in enumerate(questions.iterrows(), 1):
-                with st.expander(f"Q{row['sequence_number']}: {row['content'][:50]}..."):
+                with st.expander(f"Q{row['sequence_number']}: {row['content'][:100]}..."):
                     # Display question details
                     st.write(f"**Full Question:** {row['content']}")
                     if 'references' in row and row['references']:
@@ -822,9 +829,11 @@ def question_page():
                     form_key = f"edit_question_{row['question_id']}"
                     with st.form(form_key):
                         edit_content = st.text_area("Content", value=row['content'])
+                        edit_author = st.text_input("Updated By (optional)")
                         edit_references = st.text_area("References (optional)", 
                                                       value=row.get('references', ''),
-                                                      help="Add links to files, images, or other resources that this question refers to")
+                                                      help="Add links to files, images, or other resources that this question refers to",
+                                                      height=100)
                         edit_seq = st.number_input("Sequence", 
                                                   min_value=1,
                                                   value=int(row['sequence_number']))
@@ -893,8 +902,9 @@ answer_thread_select"
         with st.expander("Add New Answer"):
             with st.form("add_answer_form"):
                 content = st.text_area("Answer Content")
+                author = st.text_input("Created By (optional)")
                 is_ai = st.checkbox("Is AI Generated", value=True)
-                metadata = st.text_area("Metadata (optional)")
+                metadata = st.text_area("Metadata (optional)", height=100)
                 
                 submit_button = st.form_submit_button("Add Answer")
                 
@@ -1035,7 +1045,7 @@ def evaluation_page():
         question_id = st.selectbox(
             "Select Question",
             options=questions['question_id'].tolist(),
-            format_func=lambda x: f"Q{questions.loc[questions['question_id'] == x, 'sequence_number'].iloc[0]}: {questions.loc[questions['question_id'] == x, 'content'].iloc[0][:50]}...",
+            format_func=lambda x: f"Q{questions.loc[questions['question_id'] == x, 'sequence_number'].iloc[0]}: {questions.loc[questions['question_id'] == x, 'content'].iloc[0][:100]}...",
             key="eval_question_select",
             index=questions['question_id'].tolist().index(st.session_state[question_key]) if st.session_state[question_key] in questions['question_id'].values else 0
         )
@@ -1072,8 +1082,9 @@ def evaluation_page():
         with st.expander("Add New Evaluation"):
             with st.form("add_evaluation_form"):
                 dimension = st.text_input("Evaluation Dimension (e.g., Accuracy, Clarity)")
+                author = st.text_input("Created By (optional)")
                 score = st.slider("Score", min_value=0.0, max_value=10.0, value=5.0, step=1.0)
-                comments = st.text_area("Comments/Feedback (optional)")
+                comments = st.text_area("Comments/Feedback (optional)", height=100)
                 evaluator = st.text_input("Evaluator Name (optional)")
                 
                 submit_button = st.form_submit_button("Add Evaluation")
@@ -1107,12 +1118,13 @@ def evaluation_page():
                     form_key = f"edit_eval_{row['evaluation_id']}"
                     with st.form(form_key):
                         edit_dimension = st.text_input("Dimension", value=row['dimension'])
+                        edit_author = st.text_input("Updated By (optional)")
                         edit_score = st.slider("Score", 
                                               min_value=0.0, 
                                               max_value=10.0, 
                                               value=float(row['score']), 
                                               step=1.0)
-                        edit_comments = st.text_area("Comments (optional)", value=row['comments'] if row['comments'] else "")
+                        edit_comments = st.text_area("Comments (optional)", value=row['comments'] if row['comments'] else "", height=100)
                         edit_evaluator = st.text_input("Evaluator (optional)", value=row['evaluator'] if row['evaluator'] else "")
                         
                         col1, col2 = st.columns(2)
