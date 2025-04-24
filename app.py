@@ -88,7 +88,15 @@ def initialize_database():
 # SQL script for table creation
 def get_table_creation_sql():
     return """
--- Create tables in Supabase SQL Editor
+-- First, drop all tables in reverse order of dependencies
+DROP TABLE IF EXISTS evaluations;
+DROP TABLE IF EXISTS answers;
+DROP TABLE IF EXISTS questions;
+DROP TABLE IF EXISTS question_threads;
+DROP TABLE IF EXISTS question_categories;
+DROP TABLE IF EXISTS ai_personas;
+
+-- Now recreate all the tables with the correct schema
 
 -- AI Personas table
 CREATE TABLE IF NOT EXISTS ai_personas (
@@ -121,7 +129,7 @@ CREATE TABLE IF NOT EXISTS question_threads (
     FOREIGN KEY (category_id) REFERENCES question_categories(category_id) ON DELETE CASCADE
 );
 
--- Questions table
+-- Questions table - now with reference_links column instead of reserved keyword 'references'
 CREATE TABLE IF NOT EXISTS questions (
     question_id SERIAL PRIMARY KEY,
     thread_id INTEGER NOT NULL,
@@ -279,7 +287,7 @@ class ThreadManager:
 
 class QuestionManager:
     @staticmethod
-    def create(thread_id, content, references="", sequence_number=None):
+    def create(thread_id, content, reference_links="", sequence_number=None):
         if sequence_number is None:
             result = supabase_request("get", "questions", 
                                     params={"thread_id": f"eq.{thread_id}", "order": "sequence_number.desc", "limit": 1})
@@ -291,7 +299,7 @@ class QuestionManager:
             "thread_id": thread_id,
             "sequence_number": sequence_number,
             "content": content,
-            "references": references
+            "reference_links": reference_links
         }
         result = supabase_request("post", "questions", data=data)
         if result and len(result) > 0:
@@ -313,14 +321,14 @@ class QuestionManager:
         return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
-    def update(question_id, content, references=None, sequence_number=None):
+    def update(question_id, content, reference_links=None, sequence_number=None):
         data = {
             "content": content,
             "updated_at": datetime.now().isoformat()
         }
         
-        if references is not None:
-            data["references"] = references
+        if reference_links is not None:
+            data["reference_links"] = reference_links
             
         if sequence_number is not None:
             data["sequence_number"] = sequence_number
@@ -776,7 +784,7 @@ def question_page():
             with st.form("add_question_form"):
                 content = st.text_area("Question Content")
                 author = st.text_input("Created By (optional)")
-                references = st.text_area("References (optional)", 
+                reference_links = st.text_area("Reference Links (optional)", 
                                           help="Add links to files, images, or other resources that this question refers to",
                                           height=100)
                 
@@ -792,7 +800,7 @@ def question_page():
                 
                 if submit_button and content:
                     try:
-                        QuestionManager.create(thread_id, content, references, sequence)
+                        QuestionManager.create(thread_id, content, reference_links, sequence)
                         st.success("Added question successfully!")
                         st.rerun()
                     except Exception as e:
@@ -820,8 +828,8 @@ def question_page():
                 with st.expander(f"Q{row['sequence_number']}: {row['content'][:100]}..."):
                     # Display question details
                     st.write(f"**Full Question:** {row['content']}")
-                    if 'references' in row and row['references']:
-                        st.write(f"**References:** {row['references']}")
+                    if 'reference_links' in row and row['reference_links']:
+                        st.write(f"**Reference Links:** {row['reference_links']}")
                     st.write(f"**Sequence:** {row['sequence_number']}")
                     st.write(f"**Created:** {row['created_at']}")
                     st.write(f"**Updated:** {row['updated_at']}")
@@ -831,8 +839,8 @@ def question_page():
                     with st.form(form_key):
                         edit_content = st.text_area("Content", value=row['content'])
                         edit_author = st.text_input("Updated By (optional)")
-                        edit_references = st.text_area("References (optional)", 
-                                                      value=row.get('references', ''),
+                        edit_reference_links = st.text_area("Reference Links (optional)", 
+                                                      value=row.get('reference_links', ''),
                                                       help="Add links to files, images, or other resources that this question refers to",
                                                       height=100)
                         edit_seq = st.number_input("Sequence", 
@@ -847,7 +855,7 @@ def question_page():
                     
                     if update_button and edit_content:
                         try:
-                            QuestionManager.update(row['question_id'], edit_content, edit_references, edit_seq)
+                            QuestionManager.update(row['question_id'], edit_content, edit_reference_links, edit_seq)
                             QuestionManager.reorder(thread_id)  # Ensure proper ordering
                             st.success("Updated successfully!")
                             # Clear the form after successful update
