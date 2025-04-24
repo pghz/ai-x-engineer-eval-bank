@@ -127,7 +127,7 @@ CREATE TABLE IF NOT EXISTS questions (
     thread_id INTEGER NOT NULL,
     sequence_number INTEGER NOT NULL,
     content TEXT NOT NULL,
-    references TEXT,
+    reference_links TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (thread_id) REFERENCES question_threads(thread_id) ON DELETE CASCADE
