@@ -809,7 +809,7 @@ def question_page():
                         st.error(f"Error reordering questions: {str(e)}")
             
             for i, (_, row) in enumerate(questions.iterrows(), 1):
-                with st.expander(f"Q{row['sequence_number']}: {row['content'][:50]}..."):
+                with st.expander(f"Q{row['sequence_number']}: {row['content'][:100]}..."):
                     # Display question details
                     st.write(f"**Full Question:** {row['content']}")
                     if 'references' in row and row['references']:
