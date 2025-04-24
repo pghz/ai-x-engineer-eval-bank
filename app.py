@@ -34,8 +34,16 @@ def supabase_request(method, endpoint, params=None, data=None):
         elif method.lower() == "put":
             response = requests.put(url, headers=headers, json=data)
         elif method.lower() == "patch":
-            response = requests.patch(url, headers=headers, json=data)
+            # Ensure we have a WHERE clause for PATCH/UPDATE
+            if not params:
+                st.error("Update requires a WHERE clause")
+                return None
+            response = requests.patch(url, headers=headers, json=data, params=params)
         elif method.lower() == "delete":
+            # Ensure we have a WHERE clause for DELETE
+            if not params:
+                st.error("Delete requires a WHERE clause")
+                return None
             response = requests.delete(url, headers=headers, params=params)
         else:
             st.error(f"Invalid method: {method}")
@@ -103,7 +111,9 @@ CREATE TABLE IF NOT EXISTS ai_personas (
     persona_id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     description TEXT,
+    created_by TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_by TEXT,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -113,7 +123,9 @@ CREATE TABLE IF NOT EXISTS question_categories (
     persona_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     description TEXT,
+    created_by TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_by TEXT,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (persona_id) REFERENCES ai_personas(persona_id) ON DELETE CASCADE
 );
@@ -124,19 +136,23 @@ CREATE TABLE IF NOT EXISTS question_threads (
     category_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     description TEXT,
+    created_by TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_by TEXT,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (category_id) REFERENCES question_categories(category_id) ON DELETE CASCADE
 );
 
--- Questions table - now with reference_links column instead of reserved keyword 'references'
+-- Questions table
 CREATE TABLE IF NOT EXISTS questions (
     question_id SERIAL PRIMARY KEY,
     thread_id INTEGER NOT NULL,
     sequence_number INTEGER NOT NULL,
     content TEXT NOT NULL,
     reference_links TEXT,
+    created_by TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_by TEXT,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (thread_id) REFERENCES question_threads(thread_id) ON DELETE CASCADE
 );
@@ -148,7 +164,9 @@ CREATE TABLE IF NOT EXISTS answers (
     is_ai_generated BOOLEAN NOT NULL,
     content TEXT NOT NULL,
     metadata TEXT,
+    created_by TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_by TEXT,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (question_id) REFERENCES questions(question_id) ON DELETE CASCADE
 );
@@ -161,7 +179,9 @@ CREATE TABLE IF NOT EXISTS evaluations (
     score REAL NOT NULL,
     comments TEXT,
     evaluator TEXT,
+    created_by TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_by TEXT,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (answer_id) REFERENCES answers(answer_id) ON DELETE CASCADE
 );
@@ -170,10 +190,11 @@ CREATE TABLE IF NOT EXISTS evaluations (
 # CRUD operations for each table
 class PersonaManager:
     @staticmethod
-    def create(name, description=""):
+    def create(name, description="", created_by=""):
         data = {
             "name": name,
-            "description": description
+            "description": description,
+            "created_by": created_by
         }
         result = supabase_request("post", "ai_personas", data=data)
         if result and len(result) > 0:
@@ -191,10 +212,11 @@ class PersonaManager:
         return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
-    def update(persona_id, name, description):
+    def update(persona_id, name, description, updated_by=""):
         data = {
             "name": name,
             "description": description,
+            "updated_by": updated_by,
             "updated_at": datetime.now().isoformat()
         }
         supabase_request("patch", f"ai_personas", params={"persona_id": f"eq.{persona_id}"}, data=data)
@@ -205,11 +227,12 @@ class PersonaManager:
 
 class CategoryManager:
     @staticmethod
-    def create(persona_id, name, description=""):
+    def create(persona_id, name, description="", created_by=""):
         data = {
             "persona_id": persona_id,
             "name": name,
-            "description": description
+            "description": description,
+            "created_by": created_by
         }
         result = supabase_request("post", "question_categories", data=data)
         if result and len(result) > 0:
@@ -229,10 +252,11 @@ class CategoryManager:
         return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
-    def update(category_id, name, description):
+    def update(category_id, name, description, updated_by=""):
         data = {
             "name": name,
             "description": description,
+            "updated_by": updated_by,
             "updated_at": datetime.now().isoformat()
         }
         supabase_request("patch", "question_categories", 
@@ -246,11 +270,12 @@ class CategoryManager:
 
 class ThreadManager:
     @staticmethod
-    def create(category_id, name, description=""):
+    def create(category_id, name, description="", created_by=""):
         data = {
             "category_id": category_id,
             "name": name,
-            "description": description
+            "description": description,
+            "created_by": created_by
         }
         result = supabase_request("post", "question_threads", data=data)
         if result and len(result) > 0:
@@ -270,10 +295,11 @@ class ThreadManager:
         return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
-    def update(thread_id, name, description):
+    def update(thread_id, name, description, updated_by=""):
         data = {
             "name": name,
             "description": description,
+            "updated_by": updated_by,
             "updated_at": datetime.now().isoformat()
         }
         supabase_request("patch", "question_threads", 
@@ -287,7 +313,7 @@ class ThreadManager:
 
 class QuestionManager:
     @staticmethod
-    def create(thread_id, content, reference_links="", sequence_number=None):
+    def create(thread_id, content, reference_links="", created_by="", sequence_number=None):
         if sequence_number is None:
             result = supabase_request("get", "questions", 
                                     params={"thread_id": f"eq.{thread_id}", "order": "sequence_number.desc", "limit": 1})
@@ -299,7 +325,8 @@ class QuestionManager:
             "thread_id": thread_id,
             "sequence_number": sequence_number,
             "content": content,
-            "reference_links": reference_links
+            "reference_links": reference_links,
+            "created_by": created_by
         }
         result = supabase_request("post", "questions", data=data)
         if result and len(result) > 0:
@@ -321,9 +348,10 @@ class QuestionManager:
         return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
-    def update(question_id, content, reference_links=None, sequence_number=None):
+    def update(question_id, content, reference_links=None, updated_by="", sequence_number=None):
         data = {
             "content": content,
+            "updated_by": updated_by,
             "updated_at": datetime.now().isoformat()
         }
         
@@ -359,12 +387,13 @@ class QuestionManager:
 
 class AnswerManager:
     @staticmethod
-    def create(question_id, content, is_ai_generated=True, metadata=""):
+    def create(question_id, content, is_ai_generated=True, metadata="", created_by=""):
         data = {
             "question_id": question_id,
             "is_ai_generated": is_ai_generated,
             "content": content,
-            "metadata": metadata
+            "metadata": metadata,
+            "created_by": created_by
         }
         result = supabase_request("post", "answers", data=data)
         if result and len(result) > 0:
@@ -384,9 +413,10 @@ class AnswerManager:
         return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
-    def update(answer_id, content, is_ai_generated=None, metadata=None):
+    def update(answer_id, content, is_ai_generated=None, metadata=None, updated_by=""):
         data = {
             "content": content,
+            "updated_by": updated_by,
             "updated_at": datetime.now().isoformat()
         }
         
@@ -406,13 +436,14 @@ class AnswerManager:
 
 class EvaluationManager:
     @staticmethod
-    def create(answer_id, dimension, score, comments="", evaluator=""):
+    def create(answer_id, dimension, score, comments="", evaluator="", created_by=""):
         data = {
             "answer_id": answer_id,
             "dimension": dimension,
             "score": score,
             "comments": comments,
-            "evaluator": evaluator
+            "evaluator": evaluator,
+            "created_by": created_by
         }
         result = supabase_request("post", "evaluations", data=data)
         if result and len(result) > 0:
@@ -438,8 +469,11 @@ class EvaluationManager:
         return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
-    def update(evaluation_id, dimension=None, score=None, comments=None, evaluator=None):
-        data = {"updated_at": datetime.now().isoformat()}
+    def update(evaluation_id, dimension=None, score=None, comments=None, evaluator=None, updated_by=""):
+        data = {
+            "updated_by": updated_by,
+            "updated_at": datetime.now().isoformat()
+        }
         
         if dimension is not None:
             data["dimension"] = dimension
@@ -476,7 +510,8 @@ def persona_page():
             
             if submit_button and name:
                 try:
-                    PersonaManager.create(name, description)
+                    # Pass the created_by parameter
+                    PersonaManager.create(name, description, author)
                     st.success(f"Added persona: {name}")
                     st.rerun()
                 except Exception as e:
@@ -488,9 +523,17 @@ def persona_page():
         if not personas.empty:
             for _, row in personas.iterrows():
                 with st.expander(f"{row['name']}"):
-                    # Display persona details
+                    # Display persona details with creator info
                     st.write(f"**Description:** {row['description']}")
+                    
+                    # Show creator information if available
+                    if 'created_by' in row and row['created_by']:
+                        st.write(f"**Created By:** {row['created_by']}")
                     st.write(f"**Created:** {row['created_at']}")
+                    
+                    # Show updater information if available
+                    if 'updated_by' in row and row['updated_by']:
+                        st.write(f"**Updated By:** {row['updated_by']}")
                     st.write(f"**Updated:** {row['updated_at']}")
                     
                     # Edit form
@@ -508,7 +551,8 @@ def persona_page():
                     
                     if update_button and edit_name:
                         try:
-                            PersonaManager.update(row['persona_id'], edit_name, edit_desc)
+                            # Pass the updated_by parameter
+                            PersonaManager.update(row['persona_id'], edit_name, edit_desc, edit_author)
                             st.success("Updated successfully!")
                             st.rerun()
                         except Exception as e:
@@ -561,7 +605,8 @@ def category_page():
                 
                 if submit_button and name:
                     try:
-                        CategoryManager.create(persona_id, name, description)
+                        # Pass created_by parameter
+                        CategoryManager.create(persona_id, name, description, author)
                         st.success(f"Added category: {name}")
                         st.rerun()
                     except Exception as e:
@@ -574,7 +619,15 @@ def category_page():
                 with st.expander(f"{row['name']}"):
                     # Display category details
                     st.write(f"**Description:** {row['description']}")
+                    
+                    # Show creator information if available
+                    if 'created_by' in row and row['created_by']:
+                        st.write(f"**Created By:** {row['created_by']}")
                     st.write(f"**Created:** {row['created_at']}")
+                    
+                    # Show updater information if available
+                    if 'updated_by' in row and row['updated_by']:
+                        st.write(f"**Updated By:** {row['updated_by']}")
                     st.write(f"**Updated:** {row['updated_at']}")
                     
                     # Edit form
@@ -592,7 +645,8 @@ def category_page():
                     
                     if update_button and edit_name:
                         try:
-                            CategoryManager.update(row['category_id'], edit_name, edit_desc)
+                            # Pass updated_by parameter
+                            CategoryManager.update(row['category_id'], edit_name, edit_desc, edit_author)
                             st.success("Updated successfully!")
                             st.rerun()
                         except Exception as e:
@@ -664,7 +718,8 @@ def thread_page():
                 
                 if submit_button and name:
                     try:
-                        ThreadManager.create(category_id, name, description)
+                        # Pass created_by parameter
+                        ThreadManager.create(category_id, name, description, author)
                         st.success(f"Added thread: {name}")
                         st.rerun()
                     except Exception as e:
@@ -677,7 +732,15 @@ def thread_page():
                 with st.expander(f"{row['name']}"):
                     # Display thread details
                     st.write(f"**Description:** {row['description']}")
+                    
+                    # Show creator information if available
+                    if 'created_by' in row and row['created_by']:
+                        st.write(f"**Created By:** {row['created_by']}")
                     st.write(f"**Created:** {row['created_at']}")
+                    
+                    # Show updater information if available
+                    if 'updated_by' in row and row['updated_by']:
+                        st.write(f"**Updated By:** {row['updated_by']}")
                     st.write(f"**Updated:** {row['updated_at']}")
                     
                     # Edit form
@@ -695,7 +758,8 @@ def thread_page():
                     
                     if update_button and edit_name:
                         try:
-                            ThreadManager.update(row['thread_id'], edit_name, edit_desc)
+                            # Pass updated_by parameter
+                            ThreadManager.update(row['thread_id'], edit_name, edit_desc, edit_author)
                             st.success("Updated successfully!")
                             st.rerun()
                         except Exception as e:
@@ -800,7 +864,8 @@ def question_page():
                 
                 if submit_button and content:
                     try:
-                        QuestionManager.create(thread_id, content, reference_links, sequence)
+                        # Pass created_by parameter
+                        QuestionManager.create(thread_id, content, reference_links, author, sequence)
                         st.success("Added question successfully!")
                         st.rerun()
                     except Exception as e:
@@ -831,7 +896,15 @@ def question_page():
                     if 'reference_links' in row and row['reference_links']:
                         st.write(f"**Reference Links:** {row['reference_links']}")
                     st.write(f"**Sequence:** {row['sequence_number']}")
+                    
+                    # Show creator information if available
+                    if 'created_by' in row and row['created_by']:
+                        st.write(f"**Created By:** {row['created_by']}")
                     st.write(f"**Created:** {row['created_at']}")
+                    
+                    # Show updater information if available
+                    if 'updated_by' in row and row['updated_by']:
+                        st.write(f"**Updated By:** {row['updated_by']}")
                     st.write(f"**Updated:** {row['updated_at']}")
                     
                     # Edit form
@@ -855,7 +928,8 @@ def question_page():
                     
                     if update_button and edit_content:
                         try:
-                            QuestionManager.update(row['question_id'], edit_content, edit_reference_links, edit_seq)
+                            # Pass updated_by parameter
+                            QuestionManager.update(row['question_id'], edit_content, edit_reference_links, edit_author, edit_seq)
                             QuestionManager.reorder(thread_id)  # Ensure proper ordering
                             st.success("Updated successfully!")
                             # Clear the form after successful update
@@ -877,7 +951,8 @@ def question_page():
                     if not answers.empty:
                         for ans_idx, ans_row in answers.iterrows():
                             content_length = len(str(ans_row['content'])) if ans_row['content'] else 0
-                            st.write(f"- Answer {ans_idx+1}: \"{'AI' if ans_row['is_ai_generated'] else 'Human'} Response\" "
+                            ans_author = f" by {ans_row['created_by']}" if 'created_by' in ans_row and ans_row['created_by'] else ""
+                            st.write(f"- Answer {ans_idx+1}: \"{'AI' if ans_row['is_ai_generated'] else 'Human'} Response\"{ans_author} "
                                     f"({content_length} chars)")
         else:
             st.info(f"No questions have been added for this thread yet.")
@@ -985,7 +1060,8 @@ def answer_page():
                 
                 if submit_button and content:
                     try:
-                        AnswerManager.create(question_id, content, is_ai, metadata)
+                        # Pass created_by parameter
+                        AnswerManager.create(question_id, content, is_ai, metadata, author)
                         st.success("Added answer successfully!")
                         st.rerun()
                     except Exception as e:
@@ -1000,8 +1076,17 @@ def answer_page():
                     # Display answer details
                     st.write(f"**Content:** {row['content']}")
                     st.write(f"**Source:** {'AI' if row['is_ai_generated'] else 'Human'}")
-                    st.write(f"**Metadata:** {row['metadata']}")
+                    if row['metadata']:
+                        st.write(f"**Metadata:** {row['metadata']}")
+                    
+                    # Show creator information if available
+                    if 'created_by' in row and row['created_by']:
+                        st.write(f"**Created By:** {row['created_by']}")
                     st.write(f"**Created:** {row['created_at']}")
+                    
+                    # Show updater information if available
+                    if 'updated_by' in row and row['updated_by']:
+                        st.write(f"**Updated By:** {row['updated_by']}")
                     st.write(f"**Updated:** {row['updated_at']}")
                     
                     # Edit form
@@ -1020,7 +1105,8 @@ def answer_page():
                     
                     if update_button and edit_content:
                         try:
-                            AnswerManager.update(row['answer_id'], edit_content, edit_is_ai, edit_metadata)
+                            # Pass updated_by parameter
+                            AnswerManager.update(row['answer_id'], edit_content, edit_is_ai, edit_metadata, edit_author)
                             st.success("Updated successfully!")
                             st.rerun()
                         except Exception as e:
@@ -1039,7 +1125,8 @@ def answer_page():
                     st.write(f"**This answer has {len(evaluations)} evaluations.**")
                     if not evaluations.empty:
                         for eval_idx, eval_row in evaluations.iterrows():
-                            st.write(f"- {eval_row['dimension']}: Score {eval_row['score']}")
+                            evaluator_info = f" by {eval_row['evaluator']}" if eval_row['evaluator'] else ""
+                            st.write(f"- {eval_row['dimension']}: Score {eval_row['score']}{evaluator_info}")
         else:
             st.info(f"No answers have been added for this question yet.")
     except Exception as e:
@@ -1158,16 +1245,18 @@ def evaluation_page():
         # Form for adding a new evaluation
         with st.expander("Add New Evaluation"):
             with st.form("add_evaluation_form"):
-                dimension = st.text_input("Evaluation Dimension (e.g. accuracy, clarity, relevance, completeness, coherence, insight, tone, verifiability, specificity, etc.)")
-                evaluator = st.text_input("Evaluator Name (optional)")
+                dimension = st.text_input("Evaluation Dimension (e.g., Accuracy, Clarity)")
+                author = st.text_input("Created By (optional)")
                 score = st.slider("Score", min_value=0.0, max_value=10.0, value=5.0, step=1.0)
                 comments = st.text_area("Comments/Feedback (optional)", height=100)
+                evaluator = st.text_input("Evaluator Name (optional)")
                 
                 submit_button = st.form_submit_button("Add Evaluation")
                 
                 if submit_button and dimension:
                     try:
-                        EvaluationManager.create(answer_id, dimension, score, comments, evaluator)
+                        # Pass created_by parameter
+                        EvaluationManager.create(answer_id, dimension, score, comments, evaluator, author)
                         st.success(f"Added evaluation for dimension: {dimension}")
                         st.rerun()
                     except Exception as e:
@@ -1185,9 +1274,19 @@ def evaluation_page():
                     # Display evaluation details
                     st.write(f"**Dimension:** {row['dimension']}")
                     st.write(f"**Score:** {row['score']}/10.0")
-                    st.write(f"**Comments:** {row['comments']}")
-                    st.write(f"**Evaluator:** {row['evaluator']}")
+                    if row['comments']:
+                        st.write(f"**Comments:** {row['comments']}")
+                    if row['evaluator']:
+                        st.write(f"**Evaluator:** {row['evaluator']}")
+                    
+                    # Show creator information if available
+                    if 'created_by' in row and row['created_by']:
+                        st.write(f"**Created By:** {row['created_by']}")
                     st.write(f"**Created:** {row['created_at']}")
+                    
+                    # Show updater information if available
+                    if 'updated_by' in row and row['updated_by']:
+                        st.write(f"**Updated By:** {row['updated_by']}")
                     st.write(f"**Updated:** {row['updated_at']}")
                     
                     # Edit form
@@ -1211,12 +1310,14 @@ def evaluation_page():
                     
                     if update_button:
                         try:
+                            # Pass updated_by parameter
                             EvaluationManager.update(
                                 row['evaluation_id'], 
                                 edit_dimension, 
                                 edit_score, 
                                 edit_comments, 
-                                edit_evaluator
+                                edit_evaluator,
+                                edit_author
                             )
                             st.success("Updated successfully!")
                             st.rerun()
@@ -1233,6 +1334,20 @@ def evaluation_page():
         else:
             st.info("No evaluations have been added for this answer yet.")
             
+            # Suggest common dimensions
+            st.write("### Suggested Evaluation Dimensions")
+            st.write("Here are some common dimensions you might want to evaluate:")
+            dimensions = [
+                "Technical Accuracy", 
+                "Reasoning Quality", 
+                "Clarity of Explanation", 
+                "Completeness",
+                "Creativity",
+                "Problem-Solving Approach",
+                "Code Quality (if applicable)"
+            ]
+            for dim in dimensions:
+                st.write(f"- {dim}")
     except Exception as e:
         st.error(f"Error on evaluation page: {str(e)}")
 
