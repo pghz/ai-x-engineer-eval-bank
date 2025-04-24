@@ -498,7 +498,7 @@ class EvaluationManager:
 
 # UI functions
 def persona_page():
-    st.header("AI X-Engineer Personas")
+    st.header("AI Engineer Personas")
     
     # Form for adding a new persona
     with st.expander("Add New Persona"):
