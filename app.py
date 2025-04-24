@@ -1234,20 +1234,6 @@ def evaluation_page():
         else:
             st.info("No evaluations have been added for this answer yet.")
             
-            # Suggest common dimensions
-            st.write("### Suggested Evaluation Dimensions")
-            st.write("Here are some common dimensions you might want to evaluate:")
-            dimensions = [
-                "Technical Accuracy", 
-                "Reasoning Quality", 
-                "Clarity of Explanation", 
-                "Completeness",
-                "Creativity",
-                "Problem-Solving Approach",
-                "Code Quality (if applicable)"
-            ]
-            for dim in dimensions:
-                st.write(f"- {dim}")
     except Exception as e:
         st.error(f"Error on evaluation page: {str(e)}")
 
