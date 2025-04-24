@@ -127,6 +127,7 @@ CREATE TABLE IF NOT EXISTS questions (
     thread_id INTEGER NOT NULL,
     sequence_number INTEGER NOT NULL,
     content TEXT NOT NULL,
+    references TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (thread_id) REFERENCES question_threads(thread_id) ON DELETE CASCADE
@@ -278,7 +279,7 @@ class ThreadManager:
 
 class QuestionManager:
     @staticmethod
-    def create(thread_id, content, sequence_number=None):
+    def create(thread_id, content, references="", sequence_number=None):
         if sequence_number is None:
             result = supabase_request("get", "questions", 
                                     params={"thread_id": f"eq.{thread_id}", "order": "sequence_number.desc", "limit": 1})
@@ -289,7 +290,8 @@ class QuestionManager:
         data = {
             "thread_id": thread_id,
             "sequence_number": sequence_number,
-            "content": content
+            "content": content,
+            "references": references
         }
         result = supabase_request("post", "questions", data=data)
         if result and len(result) > 0:
@@ -311,12 +313,15 @@ class QuestionManager:
         return pd.DataFrame(result) if result else pd.DataFrame()
     
     @staticmethod
-    def update(question_id, content, sequence_number=None):
+    def update(question_id, content, references=None, sequence_number=None):
         data = {
             "content": content,
             "updated_at": datetime.now().isoformat()
         }
         
+        if references is not None:
+            data["references"] = references
+            
         if sequence_number is not None:
             data["sequence_number"] = sequence_number
         
@@ -457,7 +462,7 @@ def persona_page():
     with st.expander("Add New Persona"):
         with st.form("add_persona_form"):
             name = st.text_input("Persona Name")
-            description = st.text_area("Description")
+            description = st.text_area("Description (optional)")
             submit_button = st.form_submit_button("Add Persona")
             
             if submit_button and name:
@@ -480,9 +485,10 @@ def persona_page():
                     st.write(f"**Updated:** {row['updated_at']}")
                     
                     # Edit form
-                    with st.form(f"edit_persona_{row['persona_id']}"):
+                    form_key = f"edit_persona_{row['persona_id']}"
+                    with st.form(form_key):
                         edit_name = st.text_input("Name", value=row['name'])
-                        edit_desc = st.text_area("Description", value=row['description'])
+                        edit_desc = st.text_area("Description (optional)", value=row['description'])
                         
                         col1, col2 = st.columns(2)
                         with col1:
@@ -520,12 +526,17 @@ def category_page():
             st.warning("Please add an AI Persona first.")
             return
         
-        # Select a persona to see its categories
+        # Select a persona to see its categories - use session state to remember last selection
+        if 'last_persona_id' not in st.session_state:
+            st.session_state.last_persona_id = personas['persona_id'].iloc[0] if not personas.empty else None
+            
         persona_id = st.selectbox(
             "Select AI Persona",
             options=personas['persona_id'].tolist(),
-            format_func=lambda x: personas.loc[personas['persona_id'] == x, 'name'].iloc[0]
+            format_func=lambda x: personas.loc[personas['persona_id'] == x, 'name'].iloc[0],
+            index=personas['persona_id'].tolist().index(st.session_state.last_persona_id) if st.session_state.last_persona_id in personas['persona_id'].values else 0
         )
+        st.session_state.last_persona_id = persona_id
         
         persona_name = personas.loc[personas['persona_id'] == persona_id, 'name'].iloc[0]
         st.subheader(f"Categories for: {persona_name}")
@@ -534,7 +545,7 @@ def category_page():
         with st.expander("Add New Category"):
             with st.form("add_category_form"):
                 name = st.text_input("Category Name")
-                description = st.text_area("Description")
+                description = st.text_area("Description (optional)")
                 submit_button = st.form_submit_button("Add Category")
                 
                 if submit_button and name:
@@ -556,9 +567,10 @@ def category_page():
                     st.write(f"**Updated:** {row['updated_at']}")
                     
                     # Edit form
-                    with st.form(f"edit_category_{row['category_id']}"):
+                    form_key = f"edit_category_{row['category_id']}"
+                    with st.form(form_key):
                         edit_name = st.text_input("Name", value=row['name'])
-                        edit_desc = st.text_area("Description", value=row['description'])
+                        edit_desc = st.text_area("Description (optional)", value=row['description'])
                         
                         col1, col2 = st.columns(2)
                         with col1:
@@ -596,12 +608,17 @@ def thread_page():
             st.warning("Please add an AI Persona first.")
             return
         
-        # Select a persona to see its categories
+        # Select a persona to see its categories - use session state to remember last selection
+        if 'last_persona_id' not in st.session_state:
+            st.session_state.last_persona_id = personas['persona_id'].iloc[0] if not personas.empty else None
+            
         persona_id = st.selectbox(
             "Select AI Persona",
             options=personas['persona_id'].tolist(),
-            format_func=lambda x: personas.loc[personas['persona_id'] == x, 'name'].iloc[0]
+            format_func=lambda x: personas.loc[personas['persona_id'] == x, 'name'].iloc[0],
+            index=personas['persona_id'].tolist().index(st.session_state.last_persona_id) if st.session_state.last_persona_id in personas['persona_id'].values else 0
         )
+        st.session_state.last_persona_id = persona_id
         
         # Get categories for the selected persona
         categories = CategoryManager.get_by_persona(persona_id)
@@ -609,12 +626,18 @@ def thread_page():
             st.warning(f"Please add Categories for the selected persona first.")
             return
         
-        # Select a category to see its threads
+        # Select a category to see its threads - use session state to remember last selection
+        category_key = f"last_category_id_{persona_id}"
+        if category_key not in st.session_state:
+            st.session_state[category_key] = categories['category_id'].iloc[0] if not categories.empty else None
+            
         category_id = st.selectbox(
             "Select Question Category",
             options=categories['category_id'].tolist(),
-            format_func=lambda x: categories.loc[categories['category_id'] == x, 'name'].iloc[0]
+            format_func=lambda x: categories.loc[categories['category_id'] == x, 'name'].iloc[0],
+            index=categories['category_id'].tolist().index(st.session_state[category_key]) if st.session_state[category_key] in categories['category_id'].values else 0
         )
+        st.session_state[category_key] = category_id
         
         category_name = categories.loc[categories['category_id'] == category_id, 'name'].iloc[0]
         st.subheader(f"Threads for: {category_name}")
@@ -623,7 +646,7 @@ def thread_page():
         with st.expander("Add New Thread"):
             with st.form("add_thread_form"):
                 name = st.text_input("Thread Name")
-                description = st.text_area("Description")
+                description = st.text_area("Description (optional)")
                 submit_button = st.form_submit_button("Add Thread")
                 
                 if submit_button and name:
@@ -645,9 +668,10 @@ def thread_page():
                     st.write(f"**Updated:** {row['updated_at']}")
                     
                     # Edit form
-                    with st.form(f"edit_thread_{row['thread_id']}"):
+                    form_key = f"edit_thread_{row['thread_id']}"
+                    with st.form(form_key):
                         edit_name = st.text_input("Name", value=row['name'])
-                        edit_desc = st.text_area("Description", value=row['description'])
+                        edit_desc = st.text_area("Description (optional)", value=row['description'])
                         
                         col1, col2 = st.columns(2)
                         with col1:
@@ -685,13 +709,18 @@ def question_page():
             st.warning("Please add an AI Persona first.")
             return
         
-        # Select a persona
+        # Select a persona - use session state to remember last selection
+        if 'last_persona_id' not in st.session_state:
+            st.session_state.last_persona_id = personas['persona_id'].iloc[0] if not personas.empty else None
+            
         persona_id = st.selectbox(
             "Select AI Persona",
             options=personas['persona_id'].tolist(),
             format_func=lambda x: personas.loc[personas['persona_id'] == x, 'name'].iloc[0],
-            key="question_persona_select"
+            key="question_persona_select",
+            index=personas['persona_id'].tolist().index(st.session_state.last_persona_id) if st.session_state.last_persona_id in personas['persona_id'].values else 0
         )
+        st.session_state.last_persona_id = persona_id
         
         # Get categories for the selected persona
         categories = CategoryManager.get_by_persona(persona_id)
@@ -699,13 +728,19 @@ def question_page():
             st.warning(f"Please add Categories for the selected persona first.")
             return
         
-        # Select a category
+        # Select a category - use session state to remember last selection
+        category_key = f"last_category_id_{persona_id}"
+        if category_key not in st.session_state:
+            st.session_state[category_key] = categories['category_id'].iloc[0] if not categories.empty else None
+            
         category_id = st.selectbox(
             "Select Question Category",
             options=categories['category_id'].tolist(),
             format_func=lambda x: categories.loc[categories['category_id'] == x, 'name'].iloc[0],
-            key="question_category_select"
+            key="question_category_select",
+            index=categories['category_id'].tolist().index(st.session_state[category_key]) if st.session_state[category_key] in categories['category_id'].values else 0
         )
+        st.session_state[category_key] = category_id
         
         # Get threads for the selected category
         threads = ThreadManager.get_by_category(category_id)
@@ -713,13 +748,19 @@ def question_page():
             st.warning(f"Please add Threads for the selected category first.")
             return
         
-        # Select a thread
+        # Select a thread - use session state to remember last selection
+        thread_key = f"last_thread_id_{category_id}"
+        if thread_key not in st.session_state:
+            st.session_state[thread_key] = threads['thread_id'].iloc[0] if not threads.empty else None
+            
         thread_id = st.selectbox(
             "Select Question Thread",
             options=threads['thread_id'].tolist(),
             format_func=lambda x: threads.loc[threads['thread_id'] == x, 'name'].iloc[0],
-            key="question_thread_select"
+            key="question_thread_select",
+            index=threads['thread_id'].tolist().index(st.session_state[thread_key]) if st.session_state[thread_key] in threads['thread_id'].values else 0
         )
+        st.session_state[thread_key] = thread_id
         
         thread_name = threads.loc[threads['thread_id'] == thread_id, 'name'].iloc[0]
         st.subheader(f"Questions for thread: {thread_name}")
@@ -728,6 +769,8 @@ def question_page():
         with st.expander("Add New Question"):
             with st.form("add_question_form"):
                 content = st.text_area("Question Content")
+                references = st.text_area("References (optional)", 
+                                          help="Add links to files, images, or other resources that this question refers to")
                 
                 questions = QuestionManager.get_by_thread(thread_id)
                 max_seq = 1 if questions.empty else questions['sequence_number'].max() + 1
@@ -741,7 +784,7 @@ def question_page():
                 
                 if submit_button and content:
                     try:
-                        QuestionManager.create(thread_id, content, sequence)
+                        QuestionManager.create(thread_id, content, references, sequence)
                         st.success("Added question successfully!")
                         st.rerun()
                     except Exception as e:
@@ -769,13 +812,19 @@ def question_page():
                 with st.expander(f"Q{row['sequence_number']}: {row['content'][:50]}..."):
                     # Display question details
                     st.write(f"**Full Question:** {row['content']}")
+                    if 'references' in row and row['references']:
+                        st.write(f"**References:** {row['references']}")
                     st.write(f"**Sequence:** {row['sequence_number']}")
                     st.write(f"**Created:** {row['created_at']}")
                     st.write(f"**Updated:** {row['updated_at']}")
                     
                     # Edit form
-                    with st.form(f"edit_question_{row['question_id']}"):
+                    form_key = f"edit_question_{row['question_id']}"
+                    with st.form(form_key):
                         edit_content = st.text_area("Content", value=row['content'])
+                        edit_references = st.text_area("References (optional)", 
+                                                      value=row.get('references', ''),
+                                                      help="Add links to files, images, or other resources that this question refers to")
                         edit_seq = st.number_input("Sequence", 
                                                   min_value=1,
                                                   value=int(row['sequence_number']))
@@ -788,9 +837,10 @@ def question_page():
                     
                     if update_button and edit_content:
                         try:
-                            QuestionManager.update(row['question_id'], edit_content, edit_seq)
+                            QuestionManager.update(row['question_id'], edit_content, edit_references, edit_seq)
                             QuestionManager.reorder(thread_id)  # Ensure proper ordering
                             st.success("Updated successfully!")
+                            # Clear the form after successful update
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error updating question: {str(e)}")
@@ -816,50 +866,7 @@ def question_page():
     except Exception as e:
         st.error(f"Error on questions page: {str(e)}")
 
-def answer_page():
-    st.header("AI/Human Generated Answers")
-    
-    try:
-        # Navigation selections for hierarchy
-        personas = PersonaManager.get_all()
-        if personas.empty:
-            st.warning("Please add an AI Persona first.")
-            return
-        
-        # Select a persona
-        persona_id = st.selectbox(
-            "Select AI Persona",
-            options=personas['persona_id'].tolist(),
-            format_func=lambda x: personas.loc[personas['persona_id'] == x, 'name'].iloc[0],
-            key="answer_persona_select"
-        )
-        
-        # Get categories for the selected persona
-        categories = CategoryManager.get_by_persona(persona_id)
-        if categories.empty:
-            st.warning(f"Please add Categories for the selected persona first.")
-            return
-        
-        # Select a category
-        category_id = st.selectbox(
-            "Select Question Category",
-            options=categories['category_id'].tolist(),
-            format_func=lambda x: categories.loc[categories['category_id'] == x, 'name'].iloc[0],
-            key="answer_category_select"
-        )
-        
-        # Get threads for the selected category
-        threads = ThreadManager.get_by_category(category_id)
-        if threads.empty:
-            st.warning(f"Please add Threads for the selected category first.")
-            return
-        
-        # Select a thread
-        thread_id = st.selectbox(
-            "Select Question Thread",
-            options=threads['thread_id'].tolist(),
-            format_func=lambda x: threads.loc[threads['thread_id'] == x, 'name'].iloc[0],
-            key="answer_thread_select"
+answer_thread_select"
         )
         
         # Get questions for the selected thread
@@ -961,13 +968,18 @@ def evaluation_page():
             st.warning("Please add an AI Persona first.")
             return
         
-        # Select a persona
+        # Select a persona - use session state to remember last selection
+        if 'last_persona_id' not in st.session_state:
+            st.session_state.last_persona_id = personas['persona_id'].iloc[0] if not personas.empty else None
+            
         persona_id = st.selectbox(
             "Select AI Persona",
             options=personas['persona_id'].tolist(),
             format_func=lambda x: personas.loc[personas['persona_id'] == x, 'name'].iloc[0],
-            key="eval_persona_select"
+            key="eval_persona_select",
+            index=personas['persona_id'].tolist().index(st.session_state.last_persona_id) if st.session_state.last_persona_id in personas['persona_id'].values else 0
         )
+        st.session_state.last_persona_id = persona_id
         
         # Get categories for the selected persona
         categories = CategoryManager.get_by_persona(persona_id)
@@ -975,13 +987,19 @@ def evaluation_page():
             st.warning(f"Please add Categories for the selected persona first.")
             return
         
-        # Select a category
+        # Select a category - use session state to remember last selection
+        category_key = f"last_category_id_{persona_id}"
+        if category_key not in st.session_state:
+            st.session_state[category_key] = categories['category_id'].iloc[0] if not categories.empty else None
+            
         category_id = st.selectbox(
             "Select Question Category",
             options=categories['category_id'].tolist(),
             format_func=lambda x: categories.loc[categories['category_id'] == x, 'name'].iloc[0],
-            key="eval_category_select"
+            key="eval_category_select",
+            index=categories['category_id'].tolist().index(st.session_state[category_key]) if st.session_state[category_key] in categories['category_id'].values else 0
         )
+        st.session_state[category_key] = category_id
         
         # Get threads for the selected category
         threads = ThreadManager.get_by_category(category_id)
@@ -989,13 +1007,19 @@ def evaluation_page():
             st.warning(f"Please add Threads for the selected category first.")
             return
         
-        # Select a thread
+        # Select a thread - use session state to remember last selection
+        thread_key = f"last_thread_id_{category_id}"
+        if thread_key not in st.session_state:
+            st.session_state[thread_key] = threads['thread_id'].iloc[0] if not threads.empty else None
+            
         thread_id = st.selectbox(
             "Select Question Thread",
             options=threads['thread_id'].tolist(),
             format_func=lambda x: threads.loc[threads['thread_id'] == x, 'name'].iloc[0],
-            key="eval_thread_select"
+            key="eval_thread_select",
+            index=threads['thread_id'].tolist().index(st.session_state[thread_key]) if st.session_state[thread_key] in threads['thread_id'].values else 0
         )
+        st.session_state[thread_key] = thread_id
         
         # Get questions for the selected thread
         questions = QuestionManager.get_by_thread(thread_id)
@@ -1003,13 +1027,19 @@ def evaluation_page():
             st.warning(f"Please add Questions for the selected thread first.")
             return
         
-        # Select a question
+        # Select a question - use session state to remember last selection
+        question_key = f"last_question_id_{thread_id}"
+        if question_key not in st.session_state:
+            st.session_state[question_key] = questions['question_id'].iloc[0] if not questions.empty else None
+            
         question_id = st.selectbox(
             "Select Question",
             options=questions['question_id'].tolist(),
             format_func=lambda x: f"Q{questions.loc[questions['question_id'] == x, 'sequence_number'].iloc[0]}: {questions.loc[questions['question_id'] == x, 'content'].iloc[0][:50]}...",
-            key="eval_question_select"
+            key="eval_question_select",
+            index=questions['question_id'].tolist().index(st.session_state[question_key]) if st.session_state[question_key] in questions['question_id'].values else 0
         )
+        st.session_state[question_key] = question_id
         
         # Get answers for the selected question
         answers = AnswerManager.get_by_question(question_id)
@@ -1017,13 +1047,19 @@ def evaluation_page():
             st.warning(f"Please add Answers for the selected question first.")
             return
         
-        # Select an answer
+        # Select an answer - use session state to remember last selection
+        answer_key = f"last_answer_id_{question_id}"
+        if answer_key not in st.session_state:
+            st.session_state[answer_key] = answers['answer_id'].iloc[0] if not answers.empty else None
+            
         answer_id = st.selectbox(
             "Select Answer",
             options=answers['answer_id'].tolist(),
             format_func=lambda x: f"Answer {answers.index[answers['answer_id'] == x][0] + 1} ({'AI' if answers.loc[answers['answer_id'] == x, 'is_ai_generated'].iloc[0] else 'Human'})",
-            key="eval_answer_select"
+            key="eval_answer_select",
+            index=answers['answer_id'].tolist().index(st.session_state[answer_key]) if st.session_state[answer_key] in answers['answer_id'].values else 0
         )
+        st.session_state[answer_key] = answer_id
         
         answer_content = answers.loc[answers['answer_id'] == answer_id, 'content'].iloc[0]
         answer_source = "AI Generated" if answers.loc[answers['answer_id'] == answer_id, 'is_ai_generated'].iloc[0] else "Human Generated"
@@ -1036,9 +1072,9 @@ def evaluation_page():
         with st.expander("Add New Evaluation"):
             with st.form("add_evaluation_form"):
                 dimension = st.text_input("Evaluation Dimension (e.g., Accuracy, Clarity)")
-                score = st.slider("Score", min_value=0.0, max_value=10.0, value=5.0, step=0.1)
-                comments = st.text_area("Comments/Feedback")
-                evaluator = st.text_input("Evaluator Name")
+                score = st.slider("Score", min_value=0.0, max_value=10.0, value=5.0, step=1.0)
+                comments = st.text_area("Comments/Feedback (optional)")
+                evaluator = st.text_input("Evaluator Name (optional)")
                 
                 submit_button = st.form_submit_button("Add Evaluation")
                 
@@ -1068,15 +1104,16 @@ def evaluation_page():
                     st.write(f"**Updated:** {row['updated_at']}")
                     
                     # Edit form
-                    with st.form(f"edit_eval_{row['evaluation_id']}"):
+                    form_key = f"edit_eval_{row['evaluation_id']}"
+                    with st.form(form_key):
                         edit_dimension = st.text_input("Dimension", value=row['dimension'])
                         edit_score = st.slider("Score", 
                                               min_value=0.0, 
                                               max_value=10.0, 
                                               value=float(row['score']), 
-                                              step=0.1)
-                        edit_comments = st.text_area("Comments", value=row['comments'] if row['comments'] else "")
-                        edit_evaluator = st.text_input("Evaluator", value=row['evaluator'] if row['evaluator'] else "")
+                                              step=1.0)
+                        edit_comments = st.text_area("Comments (optional)", value=row['comments'] if row['comments'] else "")
+                        edit_evaluator = st.text_input("Evaluator (optional)", value=row['evaluator'] if row['evaluator'] else "")
                         
                         col1, col2 = st.columns(2)
                         with col1:
