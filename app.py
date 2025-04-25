@@ -171,7 +171,7 @@ CREATE TABLE IF NOT EXISTS answers (
     FOREIGN KEY (question_id) REFERENCES questions(question_id) ON DELETE CASCADE
 );
 
--- Evaluations table
+-- Evaluations table with predefined dimensions
 CREATE TABLE IF NOT EXISTS evaluations (
     evaluation_id SERIAL PRIMARY KEY,
     answer_id INTEGER NOT NULL,
@@ -183,7 +183,25 @@ CREATE TABLE IF NOT EXISTS evaluations (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_by TEXT,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (answer_id) REFERENCES answers(answer_id) ON DELETE CASCADE
+    FOREIGN KEY (answer_id) REFERENCES answers(answer_id) ON DELETE CASCADE,
+    -- Ensure only predefined dimensions can be used
+    CONSTRAINT valid_dimension CHECK (
+        dimension IN (
+            'Correctness',
+            'Relevance',
+            'Completeness',
+            'Reasoning',
+            'Clarity & Conciseness',
+            'Optional Notes'
+        )
+    ),
+    -- Ensure each dimension is evaluated only once per answer
+    UNIQUE (answer_id, dimension),
+    -- Ensure Optional Notes dimension doesn't require a meaningful score 
+    CONSTRAINT optional_notes_constraint CHECK (
+        (dimension = 'Optional Notes') OR 
+        (dimension != 'Optional Notes' AND score BETWEEN 1 AND 10)
+    )
 );
 """
 
@@ -435,8 +453,23 @@ class AnswerManager:
         supabase_request("delete", "answers", params={"answer_id": f"eq.{answer_id}"})
 
 class EvaluationManager:
+    # Define the predefined dimensions as a class variable for reuse
+    PREDEFINED_DIMENSIONS = [
+        "Correctness",
+        "Relevance",
+        "Completeness",
+        "Reasoning",
+        "Clarity & Conciseness",
+        "Optional Notes"
+    ]
+    
     @staticmethod
     def create(answer_id, dimension, score, comments="", evaluator="", created_by=""):
+        # Validate that the dimension is one of the predefined dimensions
+        if dimension not in EvaluationManager.PREDEFINED_DIMENSIONS:
+            st.error(f"Invalid dimension: {dimension}. Must be one of the predefined dimensions.")
+            return None
+            
         data = {
             "answer_id": answer_id,
             "dimension": dimension,
@@ -463,6 +496,13 @@ class EvaluationManager:
         return [row['dimension'] for row in result] if result else []
     
     @staticmethod
+    def get_missing_dimensions_for_answer(answer_id):
+        # Get dimensions that have already been evaluated
+        evaluated_dimensions = EvaluationManager.get_dimensions_for_answer(answer_id)
+        # Return dimensions that haven't been evaluated yet
+        return [dim for dim in EvaluationManager.PREDEFINED_DIMENSIONS if dim not in evaluated_dimensions]
+    
+    @staticmethod
     def get_by_id(evaluation_id):
         result = supabase_request("get", "evaluations", 
                                 params={"evaluation_id": f"eq.{evaluation_id}"})
@@ -476,6 +516,10 @@ class EvaluationManager:
         }
         
         if dimension is not None:
+            # Validate that the dimension is one of the predefined dimensions
+            if dimension not in EvaluationManager.PREDEFINED_DIMENSIONS:
+                st.error(f"Invalid dimension: {dimension}. Must be one of the predefined dimensions.")
+                return False
             data["dimension"] = dimension
         
         if score is not None:
@@ -487,14 +531,16 @@ class EvaluationManager:
         if evaluator is not None:
             data["evaluator"] = evaluator
         
-        supabase_request("patch", "evaluations", 
+        result = supabase_request("patch", "evaluations", 
                        params={"evaluation_id": f"eq.{evaluation_id}"}, 
                        data=data)
+        return result is not None
     
     @staticmethod
     def delete(evaluation_id):
-        supabase_request("delete", "evaluations", 
+        result = supabase_request("delete", "evaluations", 
                        params={"evaluation_id": f"eq.{evaluation_id}"})
+        return result is not None
 
 # UI functions
 def persona_page():
@@ -1137,23 +1183,21 @@ def evaluation_page():
     
     # Define predefined evaluation dimensions
     PREDEFINED_DIMENSIONS = [
-        "Accuracy/Correctness",
+        "Correctness",
         "Relevance",
         "Completeness",
         "Reasoning",
-        "Hallucination",
-        "Verbose",
-        "Additional Comments"
+        "Clarity & Conciseness",
+        "Optional Notes"
     ]
     
     DIMENSION_DESCRIPTIONS = {
-        "Accuracy/Correctness": "Is the answer factually correct?",
-        "Relevance": "Does the answer address the question?",
-        "Completeness": "Does the answer fully address all aspects of the question?",
-        "Reasoning": "Does the answer show clear, logical thinking—not just guesswork?",
-        "Hallucination": "Is the model inventing facts or misrepresenting things? Is there irrelevant stuff in the answer?",
-        "Verbose": "Is the answer too long or bloated? Could it be said simpler?",
-        "Additional Comments": "Anything else worth pointing out? (Tone, clarity, examples, etc.)"
+        "Correctness": "Are the facts accurate? No hallucinations or errors. (Truth)",
+        "Relevance": "Does it directly answer the question? (Focus)",
+        "Completeness": "Does it cover all necessary parts? (Breadth)",
+        "Reasoning": "Is the thinking clear, logical, and well-explained? (How it thinks, not what it says)",
+        "Clarity & Conciseness": "Is the answer well-written—easy to follow, and not too wordy? (Style)",
+        "Optional Notes": "Tone, style, examples, or anything not captured above"
     }
     
     # Function to check if all dimensions have been evaluated
@@ -1271,10 +1315,6 @@ def evaluation_page():
         st.write("**Answer Content:**")
         st.text_area("Answer", value=answer_content, height=150, disabled=True)
         
-        # Get existing evaluations to check which dimensions have already been evaluated
-        existing_evals = EvaluationManager.get_by_answer(answer_id)
-        existing_dimensions = existing_evals['dimension'].tolist() if not existing_evals.empty else []
-        
         # Form for adding/editing all evaluations at once
         with st.expander("Add or Edit Evaluations", expanded=True):
             with st.form("all_evaluations_form"):
@@ -1301,7 +1341,7 @@ def evaluation_page():
                 # Create input fields for each dimension in a more compact layout
                 for dimension in PREDEFINED_DIMENSIONS:
                     # For regular dimensions, show dimension and slider on same line
-                    if dimension != "Additional Comments":
+                    if dimension != "Optional Notes":
                         col1, col2 = st.columns([3, 2])
                         with col1:
                             # Title and description on same line
@@ -1317,7 +1357,7 @@ def evaluation_page():
                                 'comments': ""  # No comments for regular dimensions
                             }
                     else:
-                        # Additional Comments gets its own section
+                        # Optional Notes gets its own section
                         st.markdown(f"**{dimension}** - {DIMENSION_DESCRIPTIONS[dimension]}")
                         comments = st.text_area("", height=100, 
                                             value=existing_evals.get(dimension, {}).get('comments', ""),
@@ -1347,8 +1387,8 @@ def evaluation_page():
                                 EvaluationManager.update(
                                     eval_id, 
                                     None,  # Don't change dimension
-                                    values['score'] if dimension != "Additional Comments" else None,  # Only update score for regular dimensions
-                                    values['comments'] if dimension == "Additional Comments" else None,  # Only update comments for Additional Comments
+                                    values['score'] if dimension != "Optional Notes" else None,  # Only update score for regular dimensions
+                                    values['comments'] if dimension == "Optional Notes" else None,  # Only update comments for Optional Notes
                                     author,
                                     created_by
                                 )
@@ -1357,8 +1397,8 @@ def evaluation_page():
                                 EvaluationManager.create(
                                     answer_id, 
                                     dimension, 
-                                    values['score'] if dimension != "Additional Comments" else 0,  # Use 0 score for Additional Comments
-                                    values['comments'] if dimension == "Additional Comments" else "",  # Only pass comments for Additional Comments
+                                    values['score'] if dimension != "Optional Notes" else 0,  # Use 0 score for Optional Notes
+                                    values['comments'] if dimension == "Optional Notes" else "",  # Only pass comments for Optional Notes
                                     author, 
                                     created_by
                                 )
@@ -1372,11 +1412,11 @@ def evaluation_page():
                         if error_count == 0:
                             st.rerun()
         
-                    # Display evaluation summary
+        # Display evaluation summary
         evaluations = EvaluationManager.get_by_answer(answer_id)
         if not evaluations.empty:
-            # Calculate and show average score (excluding "Additional Comments")
-            score_evals = evaluations[evaluations['dimension'] != "Additional Comments"]
+            # Calculate and show average score (excluding "Optional Notes")
+            score_evals = evaluations[evaluations['dimension'] != "Optional Notes"]
             if not score_evals.empty:
                 avg_score = score_evals['score'].mean()
                 st.metric("Average Score", f"{avg_score:.1f}/10")
@@ -1405,12 +1445,12 @@ def evaluation_page():
                     # Bold dimension and description on same line to save space
                     st.markdown(f"**{row['dimension']}** - {DIMENSION_DESCRIPTIONS[row['dimension']]}")
                 with cols[1]:
-                    # Only show scores for dimensions other than "Additional Comments"
-                    if row['dimension'] != "Additional Comments":
+                    # Only show scores for dimensions other than "Optional Notes"
+                    if row['dimension'] != "Optional Notes":
                         st.write(f"{row['score']:.1f}/10")
                 
-                # Only show comments for "Additional Comments"
-                if row['dimension'] == "Additional Comments" and row['comments']:
+                # Only show comments for "Optional Notes"
+                if row['dimension'] == "Optional Notes" and row['comments']:
                     st.write(f"{row['comments']}")
                 
                 # Add a small divider between items
