@@ -1302,19 +1302,19 @@ def evaluation_page():
                     st.markdown(f"**{dimension}**")
                     st.write(f"{DIMENSION_DESCRIPTIONS[dimension]}")
                     
-                    # Pre-fill if evaluation exists
-                    default_score = existing_evals.get(dimension, {}).get('score', 5.0)
-                    default_comments = existing_evals.get(dimension, {}).get('comments', "")
-                    
-                    score = st.slider("Score", min_value=0.0, max_value=10.0, value=float(default_score), step=1.0)
-                    
-                    # Only show comments field for "Additional Comments" dimension
-                    comments = ""
+                    # Handle "Additional Comments" differently - no score, just comments
                     if dimension == "Additional Comments":
-                        comments = st.text_area("Comments/Feedback", value=default_comments, height=100)
+                        comments = st.text_area("Comments", height=100, value=existing_evals.get(dimension, {}).get('comments', ""))
+                        score = 0  # Default score, won't be displayed
+                    else:
+                        # Pre-fill if evaluation exists
+                        default_score = existing_evals.get(dimension, {}).get('score', 5.0)
+                        # Don't show "Score" label, just the slider
+                        score = st.slider("", min_value=1.0, max_value=10.0, value=float(default_score), step=1.0)
+                        comments = ""  # No comments for regular dimensions
                     
                     # Different button text based on whether it's an update or create
-                    button_text = "Update Evaluation" if dimension in existing_evals else "Add Evaluation"
+                    button_text = "Update" if dimension in existing_evals else "Add"
                     submit_button = st.form_submit_button(button_text)
                     
                     # Handle submission
@@ -1326,33 +1326,35 @@ def evaluation_page():
                                 EvaluationManager.update(
                                     eval_id, 
                                     None,  # Don't change dimension
-                                    score, 
+                                    score if dimension != "Additional Comments" else None,  # Only update score for regular dimensions
                                     comments if dimension == "Additional Comments" else None,  # Only update comments for Additional Comments
                                     author,
                                     created_by
                                 )
-                                st.success(f"Updated evaluation for {dimension}")
+                                st.success(f"Updated {dimension}")
                             else:
                                 # Create new evaluation
                                 EvaluationManager.create(
                                     answer_id, 
                                     dimension, 
-                                    score, 
+                                    score if dimension != "Additional Comments" else 0,  # Use 0 score for Additional Comments
                                     comments if dimension == "Additional Comments" else "",  # Only pass comments for Additional Comments
                                     author, 
                                     created_by
                                 )
-                                st.success(f"Added evaluation for {dimension}")
+                                st.success(f"Added {dimension}")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Error saving evaluation: {str(e)}")
         
-        # Display evaluation summary
+                    # Display evaluation summary
         evaluations = EvaluationManager.get_by_answer(answer_id)
         if not evaluations.empty:
-            # Calculate and show average score
-            avg_score = evaluations['score'].mean()
-            st.metric("Average Evaluation Score", f"{avg_score:.1f}/10.0")
+            # Calculate and show average score (excluding "Additional Comments")
+            score_evals = evaluations[evaluations['dimension'] != "Additional Comments"]
+            if not score_evals.empty:
+                avg_score = score_evals['score'].mean()
+                st.metric("Average Score", f"{avg_score:.1f}/10")
             
             # Sort evaluations to match the predefined order
             dimension_order = {dim: i for i, dim in enumerate(PREDEFINED_DIMENSIONS)}
@@ -1376,11 +1378,13 @@ def evaluation_page():
                     st.markdown(f"**{row['dimension']}**")
                     st.write(f"{DIMENSION_DESCRIPTIONS[row['dimension']]}")
                 with cols[1]:
-                    st.write(f"{row['score']}/10.0")
+                    # Only show scores for dimensions other than "Additional Comments"
+                    if row['dimension'] != "Additional Comments":
+                        st.write(f"{row['score']:.1f}/10")
                 
                 # Only show comments for "Additional Comments"
                 if row['dimension'] == "Additional Comments" and row['comments']:
-                    st.write(f"**Comments:** {row['comments']}")
+                    st.write(f"{row['comments']}")
                 
                 st.divider()
                 
