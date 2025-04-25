@@ -1156,6 +1156,14 @@ def evaluation_page():
         "Additional Comments": "Anything else worth pointing out? (Tone, clarity, examples, etc.)"
     }
     
+    # Function to check if all dimensions have been evaluated
+    def get_missing_dimensions(answer_id):
+        existing_evals = EvaluationManager.get_by_answer(answer_id)
+        if existing_evals.empty:
+            return PREDEFINED_DIMENSIONS
+        existing_dimensions = existing_evals['dimension'].values
+        return [dim for dim in PREDEFINED_DIMENSIONS if dim not in existing_dimensions]
+    
     try:
         # Navigation selections for hierarchy
         personas = PersonaManager.get_all()
@@ -1267,127 +1275,120 @@ def evaluation_page():
         existing_evals = EvaluationManager.get_by_answer(answer_id)
         existing_dimensions = existing_evals['dimension'].tolist() if not existing_evals.empty else []
         
-        # Form for adding a new evaluation
-        with st.expander("Add New Evaluation"):
-            with st.form("add_evaluation_form"):
-                # Only show dimensions that haven't been evaluated yet
-                available_dimensions = [dim for dim in PREDEFINED_DIMENSIONS if dim not in existing_dimensions]
-                
-                if not available_dimensions:
-                    st.info("All standard dimensions have already been evaluated for this answer. You can edit existing evaluations below.")
-                    dimension = st.text_input("Custom Dimension (if needed)")
-                else:
-                    dimension = st.selectbox(
-                        "Evaluation Dimension", 
-                        options=available_dimensions,
-                        format_func=lambda x: f"{x}: {DIMENSION_DESCRIPTIONS[x]}"
-                    )
-                author = st.text_input("Created By (optional)")
-                score = st.slider("Score", min_value=0.0, max_value=10.0, value=5.0, step=1.0)
-                comments = st.text_area("Comments/Feedback (optional)", height=100)
-                evaluator = st.text_input("Evaluator Name (optional)")
-                
-                submit_button = st.form_submit_button("Add Evaluation")
-                
-                if submit_button and dimension:
-                    try:
-                        # Pass created_by parameter
-                        EvaluationManager.create(answer_id, dimension, score, comments, evaluator, author)
-                        st.success(f"Added evaluation for dimension: {dimension}")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error adding evaluation: {str(e)}")
+        # Form for adding new evaluations - all dimensions at once
+        with st.expander("Add or Edit Evaluations", expanded=True):
+            author = st.text_input("Evaluator Name")
+            created_by = st.text_input("Created By (optional)")
+            
+            # Get existing evaluations to pre-fill form
+            existing_evals_df = EvaluationManager.get_by_answer(answer_id)
+            existing_evals = {}
+            if not existing_evals_df.empty:
+                for _, row in existing_evals_df.iterrows():
+                    existing_evals[row['dimension']] = {
+                        'id': row['evaluation_id'],
+                        'score': row['score'],
+                        'comments': row['comments'] if 'comments' in row and row['comments'] else ""
+                    }
+            
+            # Create a tab for each dimension
+            st.write("### Evaluation Dimensions")
+            st.write("Please evaluate all dimensions below:")
+            
+            # Create a separate form for each dimension
+            for dimension in PREDEFINED_DIMENSIONS:
+                with st.form(f"eval_form_{dimension}"):
+                    # Show dimension title in bold and description in normal text
+                    st.markdown(f"**{dimension}**")
+                    st.write(f"{DIMENSION_DESCRIPTIONS[dimension]}")
+                    
+                    # Pre-fill if evaluation exists
+                    default_score = existing_evals.get(dimension, {}).get('score', 5.0)
+                    default_comments = existing_evals.get(dimension, {}).get('comments', "")
+                    
+                    score = st.slider("Score", min_value=0.0, max_value=10.0, value=float(default_score), step=1.0)
+                    comments = st.text_area("Comments/Feedback", value=default_comments, height=100)
+                    
+                    # Different button text based on whether it's an update or create
+                    button_text = "Update Evaluation" if dimension in existing_evals else "Add Evaluation"
+                    submit_button = st.form_submit_button(button_text)
+                    
+                    # Handle submission
+                    if submit_button:
+                        try:
+                            if dimension in existing_evals:
+                                # Update existing evaluation
+                                eval_id = existing_evals[dimension]['id']
+                                EvaluationManager.update(
+                                    eval_id, 
+                                    None,  # Don't change dimension
+                                    score, 
+                                    comments, 
+                                    author,
+                                    created_by
+                                )
+                                st.success(f"Updated evaluation for {dimension}")
+                            else:
+                                # Create new evaluation
+                                EvaluationManager.create(
+                                    answer_id, 
+                                    dimension, 
+                                    score, 
+                                    comments, 
+                                    author, 
+                                    created_by
+                                )
+                                st.success(f"Added evaluation for {dimension}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error saving evaluation: {str(e)}")
         
-        # Display and manage existing evaluations
+        # Display evaluation summary
         evaluations = EvaluationManager.get_by_answer(answer_id)
         if not evaluations.empty:
             # Calculate and show average score
             avg_score = evaluations['score'].mean()
             st.metric("Average Evaluation Score", f"{avg_score:.1f}/10.0")
             
-            # Sort evaluations to prioritize predefined dimensions
-            def get_dimension_order(dim):
-                if dim in PREDEFINED_DIMENSIONS:
-                    return PREDEFINED_DIMENSIONS.index(dim)
-                return len(PREDEFINED_DIMENSIONS)  # Put custom dimensions at the end
-                
-            sorted_evaluations = sorted(evaluations.iterrows(), key=lambda x: get_dimension_order(x[1]['dimension']))
+            # Sort evaluations to match the predefined order
+            dimension_order = {dim: i for i, dim in enumerate(PREDEFINED_DIMENSIONS)}
+            evaluations['order'] = evaluations['dimension'].map(lambda d: dimension_order.get(d, 999))
+            evaluations = evaluations.sort_values('order')
             
-            for _, row in sorted_evaluations:
-                with st.expander(f"{row['dimension']} - Score: {row['score']}/10.0"):
-                    # Display evaluation details
-                    st.write(f"**Dimension:** {row['dimension']}")
-                    if row['dimension'] in DIMENSION_DESCRIPTIONS:
-                        st.write(f"**Description:** {DIMENSION_DESCRIPTIONS[row['dimension']]}")
-                    st.write(f"**Score:** {row['score']}/10.0")
-                    if row['comments']:
-                        st.write(f"**Comments:** {row['comments']}")
-                    if row['evaluator']:
-                        st.write(f"**Evaluator:** {row['evaluator']}")
-                    
-                    # Show creator information if available
-                    if 'created_by' in row and row['created_by']:
-                        st.write(f"**Created By:** {row['created_by']}")
-                    st.write(f"**Created:** {row['created_at']}")
-                    
-                    # Show updater information if available
-                    if 'updated_by' in row and row['updated_by']:
-                        st.write(f"**Updated By:** {row['updated_by']}")
-                    st.write(f"**Updated:** {row['updated_at']}")
-                    
-                    # Edit form
-                    form_key = f"edit_eval_{row['evaluation_id']}"
-                    with st.form(form_key):
-                        edit_dimension = st.text_input("Dimension", value=row['dimension'], disabled=True)
-                        if row['dimension'] in DIMENSION_DESCRIPTIONS:
-                            st.write(f"**Description:** {DIMENSION_DESCRIPTIONS[row['dimension']]}")
-                        
-                        edit_author = st.text_input("Updated By (optional)")
-                        edit_score = st.slider("Score", 
-                                              min_value=0.0, 
-                                              max_value=10.0, 
-                                              value=float(row['score']), 
-                                              step=1.0)
-                        edit_comments = st.text_area("Comments (optional)", value=row['comments'] if row['comments'] else "", height=100)
-                        edit_evaluator = st.text_input("Evaluator (optional)", value=row['evaluator'] if row['evaluator'] else "")
-                        
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            update_button = st.form_submit_button("Update")
-                        with col2:
-                            delete_button = st.form_submit_button("Delete")
-                    
-                    if update_button:
-                        try:
-                            # Pass updated_by parameter, but don't change dimension
-                            EvaluationManager.update(
-                                row['evaluation_id'], 
-                                None,  # Don't change dimension
-                                edit_score, 
-                                edit_comments, 
-                                edit_evaluator,
-                                edit_author
-                            )
-                            st.success("Updated successfully!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error updating evaluation: {str(e)}")
-                    
-                    if delete_button:
-                        try:
-                            EvaluationManager.delete(row['evaluation_id'])
-                            st.success("Deleted successfully!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error deleting evaluation: {str(e)}")
+            # Show a summary of completed evaluations
+            st.write("### Evaluation Summary")
+            
+            # Create a table layout
+            cols = st.columns([3, 1, 3])
+            with cols[0]:
+                st.write("**Dimension**")
+            with cols[1]:
+                st.write("**Score**")
+            with cols[2]:
+                st.write("**Comments**")
+                
+            for _, row in evaluations.iterrows():
+                cols = st.columns([3, 1, 3])
+                with cols[0]:
+                    # Bold dimension with normal text description
+                    st.markdown(f"**{row['dimension']}**")
+                    st.write(f"{DIMENSION_DESCRIPTIONS[row['dimension']]}")
+                with cols[1]:
+                    st.write(f"{row['score']}/10.0")
+                with cols[2]:
+                    st.write(f"{row['comments'] if row['comments'] else '-'}")
+                st.divider()
+                
+            # Show evaluator information if available
+            if 'evaluator' in evaluations.iloc[0] and evaluations.iloc[0]['evaluator']:
+                st.write(f"**Evaluator:** {evaluations.iloc[0]['evaluator']}")
+            
+            # Show which dimensions are missing
+            missing_dimensions = [dim for dim in PREDEFINED_DIMENSIONS if dim not in evaluations['dimension'].values]
+            if missing_dimensions:
+                st.warning(f"Missing evaluations for: {', '.join(missing_dimensions)}")
         else:
             st.info("No evaluations have been added for this answer yet.")
-            
-            # Show all required dimensions
-            st.write("### Required Evaluation Dimensions")
-            st.write("Please evaluate using these dimensions:")
-            for dim in PREDEFINED_DIMENSIONS:
-                st.write(f"- **{dim}**: {DIMENSION_DESCRIPTIONS[dim]}")
     except Exception as e:
         st.error(f"Error on evaluation page: {str(e)}")
 
